@@ -1,5 +1,6 @@
 import argparse
 from copy import copy
+from dataclasses import dataclass
 import os
 import sys
 import time as sleep_time
@@ -49,6 +50,16 @@ DEFAULT_HTF_SYMBOLS = (
     "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,"
     "JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE"
 )
+
+
+@dataclass
+class WatchedTrade:
+    symbol: str
+    strategy: str
+    plan: object
+    signal_time: object
+    one_r_sent: bool = False
+    closed: bool = False
 
 
 def parse_args():
@@ -401,6 +412,138 @@ def format_watch_recap_message(
     return "\n".join(lines)
 
 
+def _strategy_label(strategy: str) -> str:
+    return "ORB retest" if strategy == ORB_BODY_STRATEGY_VERSION else "HTF breakout"
+
+
+def _tracking_start_time(decision) -> object:
+    signal = decision.signal or {}
+    return (
+        signal.get("entry_timestamp")
+        or signal.get("confirmation_timestamp")
+        or signal.get("retest_timestamp")
+        or signal.get("breakout_timestamp")
+    )
+
+
+def _r_multiple_at_price(plan, price: float) -> float:
+    if plan.position_side == "long":
+        return (price - plan.entry_price_reference) / plan.risk_per_share
+    return (plan.entry_price_reference - price) / plan.risk_per_share
+
+
+def evaluate_watched_trade(
+    trade: WatchedTrade,
+    session_df: pd.DataFrame,
+) -> tuple[str | None, bool]:
+    if trade.closed or session_df.empty:
+        return None, False
+    if "timestamp_ny" not in session_df.columns:
+        raise ValueError("session_df must include timestamp_ny.")
+
+    plan = trade.plan
+    df = session_df.sort_values("timestamp_ny")
+    if trade.signal_time is not None:
+        df = df[df["timestamp_ny"] >= pd.Timestamp(trade.signal_time)]
+    if df.empty:
+        return None, False
+
+    for _, candle in df.iterrows():
+        high = float(candle["high"])
+        low = float(candle["low"])
+        timestamp = candle["timestamp_ny"]
+
+        if plan.position_side == "long":
+            stop_hit = low <= plan.stop_price
+            target_hit = high >= plan.target_price
+            one_r_hit = high >= plan.entry_price_reference + plan.risk_per_share
+        else:
+            stop_hit = high >= plan.stop_price
+            target_hit = low <= plan.target_price
+            one_r_hit = low <= plan.entry_price_reference - plan.risk_per_share
+
+        if stop_hit and target_hit:
+            trade.closed = True
+            return (
+                f"{plan.symbol} result: STOP assumed first in same candle\n"
+                f"Strategy: {_strategy_label(trade.strategy)}\n"
+                f"Time: {timestamp}\n"
+                f"Result: -1.00R\n"
+                f"Note: stop and target were both touched in the same 1-minute candle, "
+                f"so we use the conservative stop-first rule.",
+                True,
+            )
+
+        if stop_hit:
+            trade.closed = True
+            return (
+                f"{plan.symbol} result: stop hit\n"
+                f"Strategy: {_strategy_label(trade.strategy)}\n"
+                f"Time: {timestamp}\n"
+                f"Exit reference: {plan.stop_price:.2f}\n"
+                f"Result: -1.00R",
+                True,
+            )
+
+        if target_hit:
+            trade.closed = True
+            return (
+                f"{plan.symbol} result: target hit\n"
+                f"Strategy: {_strategy_label(trade.strategy)}\n"
+                f"Time: {timestamp}\n"
+                f"Exit reference: {plan.target_price:.2f}\n"
+                f"Result: +2.00R",
+                True,
+            )
+
+        if one_r_hit and not trade.one_r_sent:
+            trade.one_r_sent = True
+            one_r_price = (
+                plan.entry_price_reference + plan.risk_per_share
+                if plan.position_side == "long"
+                else plan.entry_price_reference - plan.risk_per_share
+            )
+            return (
+                f"{plan.symbol} update: +1R reached\n"
+                f"Strategy: {_strategy_label(trade.strategy)}\n"
+                f"Time: {timestamp}\n"
+                f"+1R reference: {one_r_price:.2f}\n"
+                f"Target remains: {plan.target_price:.2f}\n"
+                f"Stop remains: {plan.stop_price:.2f}",
+                False,
+            )
+
+    return None, False
+
+
+def format_watched_trade_cutoff_result(
+    trade: WatchedTrade,
+    session_df: pd.DataFrame,
+    cutoff: str,
+) -> str | None:
+    if trade.closed or session_df.empty:
+        return None
+    plan = trade.plan
+    df = session_df.sort_values("timestamp_ny")
+    if trade.signal_time is not None:
+        df = df[df["timestamp_ny"] >= pd.Timestamp(trade.signal_time)]
+    if df.empty:
+        return None
+
+    last = df.iloc[-1]
+    close = float(last["close"])
+    r_multiple = _r_multiple_at_price(plan, close)
+    trade.closed = True
+    return (
+        f"{plan.symbol} result: cutoff close\n"
+        f"Strategy: {_strategy_label(trade.strategy)}\n"
+        f"Cutoff: {cutoff} New York\n"
+        f"Last checked close: {close:.2f}\n"
+        f"Open trade result: {r_multiple:+.2f}R\n"
+        f"Note: target and stop were not hit before the watch ended."
+    )
+
+
 def load_live_session(symbol: str, trading_date) -> pd.DataFrame:
     from data.alpaca_client import get_minute_bars
 
@@ -716,7 +859,11 @@ def main():
         )
 
     stopped_reasons: dict[str, list[tuple[str, str]]] = {}
-    while datetime.now(tz=NY_TZ).time() <= cutoff and active_lanes:
+    watched_trades: list[WatchedTrade] = []
+    while (
+        datetime.now(tz=NY_TZ).time() <= cutoff
+        and (active_lanes or any(not trade.closed for trade in watched_trades))
+    ):
         for symbol, strategy in list(active_lanes):
             symbol_args = args_for_symbol(args, symbol)
             reason, decision = run_once(
@@ -742,6 +889,14 @@ def main():
                             decision,
                         ),
                     )
+                    watched_trades.append(
+                        WatchedTrade(
+                            symbol=symbol,
+                            strategy=strategy,
+                            plan=decision.plan,
+                            signal_time=_tracking_start_time(decision),
+                        )
+                    )
                 approved_lanes.add((symbol, strategy))
                 active_lanes.remove((symbol, strategy))
                 continue
@@ -755,7 +910,46 @@ def main():
                 stopped_reasons.setdefault(reason, []).append((symbol, strategy))
                 active_lanes.remove((symbol, strategy))
 
+        for trade in list(watched_trades):
+            if trade.closed:
+                continue
+            symbol_args = args_for_symbol(args, trade.symbol)
+            if args.source == "live":
+                tracking_df = load_live_session(trade.symbol, trading_date)
+            else:
+                tracking_df = load_db_session(trade.symbol, trading_date)
+            tracking_df, _ = filter_expected_session_minutes(
+                tracking_df,
+                trading_date,
+            )
+            update_message, _terminal = evaluate_watched_trade(
+                trade,
+                tracking_df,
+            )
+            if update_message is not None:
+                send_mobile_alert(symbol_args, update_message)
+
         sleep_time.sleep(args.poll_seconds)
+
+    for trade in list(watched_trades):
+        if trade.closed:
+            continue
+        symbol_args = args_for_symbol(args, trade.symbol)
+        if args.source == "live":
+            tracking_df = load_live_session(trade.symbol, trading_date)
+        else:
+            tracking_df = load_db_session(trade.symbol, trading_date)
+        tracking_df, _ = filter_expected_session_minutes(
+            tracking_df,
+            trading_date,
+        )
+        result_message = format_watched_trade_cutoff_result(
+            trade,
+            tracking_df,
+            args.cutoff,
+        )
+        if result_message is not None:
+            send_mobile_alert(symbol_args, result_message)
 
     if args.alert_status:
         if active_lanes:
