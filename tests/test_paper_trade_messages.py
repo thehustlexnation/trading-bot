@@ -8,6 +8,8 @@ from scripts.paper_trade import (
     build_approval_url,
     build_strategy_lanes,
     format_approved_message,
+    format_watch_recap_message,
+    format_watch_started_message,
     parse_strategies,
     parse_symbols,
 )
@@ -16,6 +18,7 @@ from scripts.paper_trade import (
 @dataclass
 class FakeArgs:
     symbol: str = "AAPL"
+    cutoff: str = "10:15"
 
 
 @dataclass
@@ -56,6 +59,45 @@ def test_format_approved_message_is_readable_for_manual_execution():
     assert "Stop loss: 181.75" in message
     assert "Take profit: 184.53" in message
     assert "This GitHub alert does not place the trade" in message
+
+
+def test_format_watch_started_message_groups_strategy_lanes():
+    message = format_watch_started_message(
+        symbols=["AAPL", "NVDA", "SNDK"],
+        htf_symbols=["AAPL", "MSFT", "NVDA", "AMZN"],
+        strategies=[ORB_BODY_STRATEGY_VERSION, HTF_BREAKOUT_STRATEGY_VERSION],
+        args=FakeArgs(),
+        dry_run=True,
+    )
+
+    assert "Trading watch started" in message
+    assert "Mode: DRY RUN - alerts only" in message
+    assert "ORB retest: AAPL, NVDA, SNDK" in message
+    assert "HTF breakout: AAPL, MSFT, NVDA, AMZN" in message
+    assert "No-trade reasons will be grouped" in message
+
+
+def test_format_watch_recap_groups_stopped_reasons():
+    message = format_watch_recap_message(
+        approved_lanes={("AAPL", ORB_BODY_STRATEGY_VERSION)},
+        stopped_reasons={
+            "NO_BREAKOUT": [
+                ("NVDA", HTF_BREAKOUT_STRATEGY_VERSION),
+                ("MSFT", HTF_BREAKOUT_STRATEGY_VERSION),
+            ],
+            "NO_VALID_RESISTANCE": [
+                ("GOOGL", HTF_BREAKOUT_STRATEGY_VERSION),
+            ],
+        },
+        active_lanes={("SNDK", ORB_BODY_STRATEGY_VERSION)},
+        args=FakeArgs(),
+    )
+
+    assert "Trading watch recap" in message
+    assert "AAPL: ORB retest" in message
+    assert "NO_BREAKOUT: MSFT (HTF), NVDA (HTF)" in message
+    assert "NO_VALID_RESISTANCE: GOOGL (HTF)" in message
+    assert "SNDK (ORB)" in message
 
 
 def test_parse_symbols_accepts_comma_separated_symbols():

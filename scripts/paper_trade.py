@@ -278,6 +278,55 @@ def send_mobile_alert(args, message: str, components: list[dict] | None = None) 
     return sent
 
 
+def _format_symbol_list(symbols: list[str], max_items: int = 8) -> str:
+    if len(symbols) <= max_items:
+        return ", ".join(symbols)
+    shown = ", ".join(symbols[:max_items])
+    return f"{shown}, +{len(symbols) - max_items} more"
+
+
+def format_watch_started_message(
+    symbols: list[str],
+    htf_symbols: list[str],
+    strategies: list[str],
+    args,
+    dry_run: bool,
+) -> str:
+    return (
+        f"Trading watch started\n\n"
+        f"Mode: {'DRY RUN - alerts only' if dry_run else 'PAPER SUBMIT'}\n"
+        f"Cutoff: {args.cutoff} New York\n\n"
+        f"Strategy lanes:\n"
+        f"- ORB retest: {_format_symbol_list(symbols)}\n"
+        f"- HTF breakout: {_format_symbol_list(htf_symbols)}\n\n"
+        f"I will send trade alerts immediately. No-trade reasons will be grouped "
+        f"into a recap so Discord stays readable."
+    )
+
+
+def format_watch_skipped_message(
+    symbols: list[str],
+    htf_symbols: list[str],
+    strategies: list[str],
+    reason: str,
+    args,
+    trading_date=None,
+) -> str:
+    detail = (
+        f"Date: {trading_date}"
+        if trading_date is not None
+        else f"Cutoff: {args.cutoff} New York"
+    )
+    return (
+        f"Trading watch skipped\n\n"
+        f"Reason: {reason}\n"
+        f"{detail}\n\n"
+        f"ORB symbols: {_format_symbol_list(symbols)}\n"
+        f"HTF symbols: {_format_symbol_list(htf_symbols)}\n"
+        f"Strategies: {', '.join(strategies)}"
+    )
+
+
 def format_approved_message(args, decision, dry_run: bool) -> str:
     plan = decision.plan
     signal = decision.signal or {}
@@ -304,6 +353,52 @@ def format_approved_message(args, decision, dry_run: bool) -> str:
         f"Reminder: This GitHub alert does not place the trade. "
         f"Only enter manually if the order still makes sense in Alpaca."
     )
+
+
+def format_watch_recap_message(
+    approved_lanes: set[tuple[str, str]],
+    stopped_reasons: dict[str, list[tuple[str, str]]],
+    active_lanes: set[tuple[str, str]],
+    args,
+) -> str:
+    lines = [
+        "Trading watch recap",
+        "",
+        f"Cutoff: {args.cutoff} New York",
+    ]
+
+    if approved_lanes:
+        lines.extend(["", "Trade alerts sent:"])
+        for symbol, strategy in sorted(approved_lanes):
+            label = "ORB retest" if strategy == ORB_BODY_STRATEGY_VERSION else "HTF breakout"
+            lines.append(f"- {symbol}: {label}")
+    else:
+        lines.extend(["", "Trade alerts sent: none"])
+
+    if stopped_reasons:
+        lines.extend(["", "No-trade / stopped reasons:"])
+        for reason in sorted(stopped_reasons):
+            lane_labels = [
+                f"{symbol} ({'ORB' if strategy == ORB_BODY_STRATEGY_VERSION else 'HTF'})"
+                for symbol, strategy in sorted(stopped_reasons[reason])
+            ]
+            lines.append(f"- {reason}: {_format_symbol_list(lane_labels, max_items=6)}")
+
+    if active_lanes:
+        lane_labels = [
+            f"{symbol} ({'ORB' if strategy == ORB_BODY_STRATEGY_VERSION else 'HTF'})"
+            for symbol, strategy in sorted(active_lanes)
+        ]
+        lines.extend(["", "Still had no approved signal by cutoff:"])
+        lines.append(f"- {_format_symbol_list(lane_labels, max_items=6)}")
+
+    lines.extend(
+        [
+            "",
+            "Reminder: alerts are not automatic trades. Check current price vs entry/stop before acting.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def load_live_session(symbol: str, trading_date) -> pd.DataFrame:
@@ -542,12 +637,13 @@ def main():
         if args.alert_status:
             send_mobile_alert(
                 args,
-                (
-                    f"Trading watch skipped: {', '.join(symbols)}\n"
-                    f"HTF symbols: {', '.join(htf_symbols or symbols)}\n"
-                    f"Strategies: {', '.join(strategies)}\n"
-                    f"Reason: NO_EXCHANGE_SESSION\n"
-                    f"Date: {trading_date}"
+                format_watch_skipped_message(
+                    symbols=symbols,
+                    htf_symbols=htf_symbols or symbols,
+                    strategies=strategies,
+                    reason="NO_EXCHANGE_SESSION",
+                    args=args,
+                    trading_date=trading_date,
                 ),
             )
         return
@@ -557,12 +653,12 @@ def main():
         if args.alert_status:
             send_mobile_alert(
                 args,
-                (
-                    f"Trading watch skipped: {', '.join(symbols)}\n"
-                    f"HTF symbols: {', '.join(htf_symbols or symbols)}\n"
-                    f"Strategies: {', '.join(strategies)}\n"
-                    f"Reason: AFTER_CUTOFF\n"
-                    f"Cutoff: {args.cutoff} New York"
+                format_watch_skipped_message(
+                    symbols=symbols,
+                    htf_symbols=htf_symbols or symbols,
+                    strategies=strategies,
+                    reason="AFTER_CUTOFF",
+                    args=args,
                 ),
             )
         return
@@ -610,15 +706,16 @@ def main():
     if args.alert_status:
         send_mobile_alert(
             args,
-            (
-                f"Trading watch started: {', '.join(symbols)}\n"
-                f"HTF symbols: {', '.join(htf_symbols or symbols)}\n"
-                f"Strategies: {', '.join(strategies)}\n"
-                f"Mode: {'DRY RUN' if dry_run else 'PAPER SUBMIT'}\n"
-                f"Cutoff: {args.cutoff} New York"
+            format_watch_started_message(
+                symbols=symbols,
+                htf_symbols=htf_symbols or symbols,
+                strategies=strategies,
+                args=args,
+                dry_run=dry_run,
             ),
         )
 
+    stopped_reasons: dict[str, list[tuple[str, str]]] = {}
     while datetime.now(tz=NY_TZ).time() <= cutoff and active_lanes:
         for symbol, strategy in list(active_lanes):
             symbol_args = args_for_symbol(args, symbol)
@@ -655,29 +752,26 @@ def main():
                     f"{symbol} stopped: {reason}",
                     enabled=args.notify,
                 )
-                send_mobile_alert(
-                    symbol_args,
-                    f"Paper trading watch stopped for {symbol}: {reason}",
-                )
+                stopped_reasons.setdefault(reason, []).append((symbol, strategy))
                 active_lanes.remove((symbol, strategy))
 
         sleep_time.sleep(args.poll_seconds)
 
-    if active_lanes:
+    if args.alert_status:
+        if active_lanes:
+            print("WATCH COMPLETE: no approved signal before cutoff.")
+        send_mobile_alert(
+            args,
+            format_watch_recap_message(
+                approved_lanes=approved_lanes,
+                stopped_reasons=stopped_reasons,
+                active_lanes=active_lanes,
+                args=args,
+            ),
+        )
+    elif active_lanes:
         print("WATCH COMPLETE: no approved signal before cutoff.")
-        if args.alert_status:
-            remaining = [
-                f"{symbol}:{strategy}"
-                for symbol, strategy in sorted(active_lanes)
-            ]
-            send_mobile_alert(
-                args,
-                (
-                    f"Trading watch complete.\n"
-                    f"No approved signal before {args.cutoff} New York for:\n"
-                    f"{', '.join(remaining)}"
-                ),
-            )
+
     if approved_lanes:
         approved = [
             f"{symbol}:{strategy}"
