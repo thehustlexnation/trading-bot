@@ -68,7 +68,9 @@ def test_format_context_message_lists_detected_context():
             )
         ],
         transcript_available=True,
+        transcript_source="yt_dlp_captions",
     )
 
     assert "NVDA: bullish context, 3 mention(s)" in message
     assert "levels heard: 231, 228" in message
+    assert "Transcript source: yt_dlp_captions" in message

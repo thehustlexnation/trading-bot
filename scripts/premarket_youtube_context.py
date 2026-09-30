@@ -9,6 +9,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -165,6 +166,69 @@ def fetch_transcript(video_id: str, preferred_languages: tuple[str, ...] = ("en"
     return transcript or None
 
 
+def _clean_vtt_text(raw_text: str) -> str:
+    lines = []
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "WEBVTT" or line.startswith("Kind:") or line.startswith("Language:"):
+            continue
+        if "-->" in line:
+            continue
+        if re.fullmatch(r"\d+", line):
+            continue
+        line = re.sub(r"<[^>]+>", "", line)
+        line = html.unescape(line).strip()
+        if line:
+            lines.append(line)
+    return " ".join(lines)
+
+
+def fetch_transcript_with_ytdlp(video_url: str, preferred_languages: tuple[str, ...] = ("en", "en-US")) -> str | None:
+    try:
+        from yt_dlp import YoutubeDL
+    except ImportError:
+        return None
+
+    with TemporaryDirectory() as tmpdir:
+        output_template = str(Path(tmpdir) / "%(id)s.%(ext)s")
+        options = {
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": list(preferred_languages),
+            "subtitlesformat": "vtt",
+            "outtmpl": output_template,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        try:
+            with YoutubeDL(options) as ydl:
+                ydl.extract_info(video_url, download=True)
+        except Exception:
+            return None
+
+        texts = []
+        for path in sorted(Path(tmpdir).glob("*.vtt")):
+            texts.append(_clean_vtt_text(path.read_text(encoding="utf-8", errors="replace")))
+
+    transcript = " ".join(text for text in texts if text).strip()
+    return transcript or None
+
+
+def fetch_best_transcript(video: VideoRef) -> tuple[str | None, str]:
+    transcript = fetch_transcript(video.video_id)
+    if transcript:
+        return transcript, "youtube_captions"
+
+    transcript = fetch_transcript_with_ytdlp(video.url)
+    if transcript:
+        return transcript, "yt_dlp_captions"
+
+    return None, "unavailable"
+
+
 def parse_watchlist(value: str) -> list[str]:
     symbols = [item.strip().upper() for item in value.split(",") if item.strip()]
     return list(dict.fromkeys(symbols))
@@ -227,7 +291,12 @@ def extract_ticker_context(transcript: str, watchlist: list[str]) -> list[Ticker
     return sorted(contexts, key=lambda item: (-item.mentions, item.ticker))
 
 
-def format_context_message(video: VideoRef, contexts: list[TickerContext], transcript_available: bool) -> str:
+def format_context_message(
+    video: VideoRef,
+    contexts: list[TickerContext],
+    transcript_available: bool,
+    transcript_source: str = "unavailable",
+) -> str:
     lines = [
         "Pre-market video context",
         "",
@@ -236,6 +305,8 @@ def format_context_message(video: VideoRef, contexts: list[TickerContext], trans
     ]
     if video.published:
         lines.append(f"Published: {video.published}")
+    if transcript_available:
+        lines.append(f"Transcript source: {transcript_source}")
 
     lines.extend(
         [
@@ -313,12 +384,13 @@ def main():
         )
         return
 
-    transcript = fetch_transcript(video.video_id)
+    transcript, transcript_source = fetch_best_transcript(video)
     contexts = extract_ticker_context(transcript, parse_watchlist(args.watchlist)) if transcript else []
     message = format_context_message(
         video=video,
         contexts=contexts,
         transcript_available=transcript is not None,
+        transcript_source=transcript_source,
     )
     print(message)
     notify_discord(
