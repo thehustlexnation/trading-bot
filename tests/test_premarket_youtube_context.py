@@ -1,6 +1,7 @@
 from scripts.premarket_youtube_context import (
     TickerContext,
     VideoRef,
+    _clean_srt_text,
     extract_ticker_context,
     format_context_message,
     parse_video_id,
@@ -17,6 +18,19 @@ def test_parse_video_id_accepts_common_youtube_urls():
 
 def test_parse_watchlist_normalizes_and_deduplicates():
     assert parse_watchlist("aapl, NVDA, aapl, spy") == ["AAPL", "NVDA", "SPY"]
+
+
+def test_clean_srt_text_removes_numbers_and_timestamps():
+    raw = """1
+00:00:00,000 --> 00:00:01,000
+AAPL above 230
+
+2
+00:00:01,000 --> 00:00:02,000
+NVDA looks strong
+"""
+
+    assert _clean_srt_text(raw) == "AAPL above 230 NVDA looks strong"
 
 
 def test_extract_ticker_context_finds_bias_and_levels():

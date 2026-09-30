@@ -185,6 +185,43 @@ def _clean_vtt_text(raw_text: str) -> str:
     return " ".join(lines)
 
 
+def _clean_srt_text(raw_text: str) -> str:
+    lines = []
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "-->" in line:
+            continue
+        if re.fullmatch(r"\d+", line):
+            continue
+        lines.append(html.unescape(line))
+    return " ".join(lines)
+
+
+def fetch_transcript_with_pytubefix(video_url: str) -> str | None:
+    try:
+        from pytubefix import YouTube
+    except ImportError:
+        return None
+
+    try:
+        video = YouTube(video_url)
+        caption = video.captions["a.en"] if "a.en" in video.captions else None
+        if caption is None and "en" in video.captions:
+            caption = video.captions["en"]
+        if caption is None:
+            return None
+        if hasattr(caption, "generate_txt_captions"):
+            text = caption.generate_txt_captions()
+        else:
+            text = _clean_srt_text(caption.generate_srt_captions())
+    except Exception:
+        return None
+
+    return text.strip() or None
+
+
 def fetch_transcript_with_ytdlp(video_url: str, preferred_languages: tuple[str, ...] = ("en", "en-US")) -> str | None:
     try:
         from yt_dlp import YoutubeDL
@@ -221,6 +258,10 @@ def fetch_best_transcript(video: VideoRef) -> tuple[str | None, str]:
     transcript = fetch_transcript(video.video_id)
     if transcript:
         return transcript, "youtube_captions"
+
+    transcript = fetch_transcript_with_pytubefix(video.url)
+    if transcript:
+        return transcript, "pytubefix_captions"
 
     transcript = fetch_transcript_with_ytdlp(video.url)
     if transcript:
