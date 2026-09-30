@@ -166,6 +166,11 @@ def fetch_transcript(video_id: str, preferred_languages: tuple[str, ...] = ("en"
     return transcript or None
 
 
+def debug(message: str, enabled: bool = False) -> None:
+    if enabled:
+        print(f"DEBUG: {message}")
+
+
 def _clean_vtt_text(raw_text: str) -> str:
     lines = []
     for raw_line in raw_text.splitlines():
@@ -199,33 +204,44 @@ def _clean_srt_text(raw_text: str) -> str:
     return " ".join(lines)
 
 
-def fetch_transcript_with_pytubefix(video_url: str) -> str | None:
+def fetch_transcript_with_pytubefix(video_url: str, debug_enabled: bool = False) -> str | None:
     try:
         from pytubefix import YouTube
-    except ImportError:
+    except ImportError as exc:
+        debug(f"pytubefix import failed: {exc}", debug_enabled)
         return None
 
     try:
         video = YouTube(video_url)
+        debug(f"pytubefix title: {video.title}", debug_enabled)
+        debug(f"pytubefix caption keys: {list(video.captions.keys())}", debug_enabled)
         caption = video.captions["a.en"] if "a.en" in video.captions else None
         if caption is None and "en" in video.captions:
             caption = video.captions["en"]
         if caption is None:
+            debug("pytubefix English captions not found", debug_enabled)
             return None
         if hasattr(caption, "generate_txt_captions"):
             text = caption.generate_txt_captions()
         else:
             text = _clean_srt_text(caption.generate_srt_captions())
-    except Exception:
+    except Exception as exc:
+        debug(f"pytubefix failed: {type(exc).__name__}: {exc}", debug_enabled)
         return None
 
+    debug(f"pytubefix transcript chars: {len(text.strip())}", debug_enabled)
     return text.strip() or None
 
 
-def fetch_transcript_with_ytdlp(video_url: str, preferred_languages: tuple[str, ...] = ("en", "en-US")) -> str | None:
+def fetch_transcript_with_ytdlp(
+    video_url: str,
+    preferred_languages: tuple[str, ...] = ("en", "en-US"),
+    debug_enabled: bool = False,
+) -> str | None:
     try:
         from yt_dlp import YoutubeDL
-    except ImportError:
+    except ImportError as exc:
+        debug(f"yt-dlp import failed: {exc}", debug_enabled)
         return None
 
     with TemporaryDirectory() as tmpdir:
@@ -243,7 +259,8 @@ def fetch_transcript_with_ytdlp(video_url: str, preferred_languages: tuple[str, 
         try:
             with YoutubeDL(options) as ydl:
                 ydl.extract_info(video_url, download=True)
-        except Exception:
+        except Exception as exc:
+            debug(f"yt-dlp failed: {type(exc).__name__}: {exc}", debug_enabled)
             return None
 
         texts = []
@@ -251,22 +268,29 @@ def fetch_transcript_with_ytdlp(video_url: str, preferred_languages: tuple[str, 
             texts.append(_clean_vtt_text(path.read_text(encoding="utf-8", errors="replace")))
 
     transcript = " ".join(text for text in texts if text).strip()
+    debug(f"yt-dlp transcript chars: {len(transcript)}", debug_enabled)
     return transcript or None
 
 
-def fetch_best_transcript(video: VideoRef) -> tuple[str | None, str]:
+def fetch_best_transcript(video: VideoRef, debug_enabled: bool = False) -> tuple[str | None, str]:
+    debug("trying direct YouTube captions", debug_enabled)
     transcript = fetch_transcript(video.video_id)
     if transcript:
+        debug(f"direct YouTube transcript chars: {len(transcript)}", debug_enabled)
         return transcript, "youtube_captions"
+    debug("direct YouTube captions unavailable", debug_enabled)
 
-    transcript = fetch_transcript_with_pytubefix(video.url)
+    debug("trying pytubefix captions", debug_enabled)
+    transcript = fetch_transcript_with_pytubefix(video.url, debug_enabled=debug_enabled)
     if transcript:
         return transcript, "pytubefix_captions"
 
-    transcript = fetch_transcript_with_ytdlp(video.url)
+    debug("trying yt-dlp captions", debug_enabled)
+    transcript = fetch_transcript_with_ytdlp(video.url, debug_enabled=debug_enabled)
     if transcript:
         return transcript, "yt_dlp_captions"
 
+    debug("all transcript methods unavailable", debug_enabled)
     return None, "unavailable"
 
 
@@ -387,11 +411,12 @@ def format_context_message(
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Summarize JdubTrades pre-market YouTube context.")
+    parser = argparse.ArgumentParser(description="Summarize pre-market YouTube context.")
     parser.add_argument("--channel-url", default=DEFAULT_CHANNEL_URL)
     parser.add_argument("--video-url", default=None, help="Optional direct YouTube video URL.")
     parser.add_argument("--watchlist", default=DEFAULT_WATCHLIST)
     parser.add_argument("--discord", action="store_true")
+    parser.add_argument("--debug-transcript", action="store_true")
     return parser.parse_args()
 
 
@@ -414,7 +439,7 @@ def main():
     if video is None:
         message = (
             "Pre-market video context\n\n"
-            "Could not find the latest JdubTrades video/stream from YouTube.\n"
+            "Could not find the latest pre-market video/stream from YouTube.\n"
             "Try again later or run with --video-url."
         )
         print(message)
@@ -425,7 +450,10 @@ def main():
         )
         return
 
-    transcript, transcript_source = fetch_best_transcript(video)
+    transcript, transcript_source = fetch_best_transcript(
+        video,
+        debug_enabled=args.debug_transcript,
+    )
     contexts = extract_ticker_context(transcript, parse_watchlist(args.watchlist)) if transcript else []
     message = format_context_message(
         video=video,

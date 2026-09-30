@@ -41,9 +41,11 @@ jobs:
             python scripts/premarket_youtube_context.py \
               --video-url "$VIDEO_URL" \
               --watchlist "$WATCHLIST" \
-              --discord
+              --discord \
+              --debug-transcript
           else
             python scripts/premarket_youtube_context.py \
               --watchlist "$WATCHLIST" \
-              --discord
+              --discord \
+              --debug-transcript
           fi
