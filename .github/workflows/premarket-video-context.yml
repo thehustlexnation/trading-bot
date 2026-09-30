@@ -7,6 +7,10 @@ on:
         description: Optional direct YouTube video URL. Leave empty to use latest Vincent Desiano stream/video.
         required: false
         default: ""
+      transcript_text:
+        description: Optional pasted transcript/captions text. Use this if YouTube blocks GitHub.
+        required: false
+        default: ""
       watchlist:
         description: Stock symbols to extract from the transcript
         required: true
@@ -34,18 +38,21 @@ jobs:
       - name: Analyze latest premarket video
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
+          TRANSCRIPT_TEXT: ${{ github.event.inputs.transcript_text }}
+          WATCHLIST: ${{ github.event.inputs.watchlist }}
         run: |
-          VIDEO_URL="${{ github.event.inputs.video_url }}"
-          WATCHLIST="${{ github.event.inputs.watchlist }}"
           if [ -n "$VIDEO_URL" ]; then
             python scripts/premarket_youtube_context.py \
               --video-url "$VIDEO_URL" \
               --watchlist "$WATCHLIST" \
+              --transcript-text "$TRANSCRIPT_TEXT" \
               --discord \
               --debug-transcript
           else
             python scripts/premarket_youtube_context.py \
               --watchlist "$WATCHLIST" \
+              --transcript-text "$TRANSCRIPT_TEXT" \
               --discord \
               --debug-transcript
           fi

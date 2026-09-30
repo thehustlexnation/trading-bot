@@ -385,7 +385,7 @@ def format_context_message(
             [
                 "",
                 "Transcript/captions were not available or YouTube temporarily blocked the caption request.",
-                "Try again later, paste a direct video link, or run from GitHub Actions/cron where YouTube may allow the request.",
+                "Try again later, run locally, or paste transcript text into the workflow input.",
             ]
         )
         return "\n".join(lines)
@@ -414,6 +414,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Summarize pre-market YouTube context.")
     parser.add_argument("--channel-url", default=DEFAULT_CHANNEL_URL)
     parser.add_argument("--video-url", default=None, help="Optional direct YouTube video URL.")
+    parser.add_argument(
+        "--transcript-text",
+        default=None,
+        help="Optional transcript/caption text. If provided, YouTube caption fetching is skipped.",
+    )
     parser.add_argument("--watchlist", default=DEFAULT_WATCHLIST)
     parser.add_argument("--discord", action="store_true")
     parser.add_argument("--debug-transcript", action="store_true")
@@ -450,10 +455,14 @@ def main():
         )
         return
 
-    transcript, transcript_source = fetch_best_transcript(
-        video,
-        debug_enabled=args.debug_transcript,
-    )
+    if args.transcript_text:
+        transcript = args.transcript_text
+        transcript_source = "manual_workflow_input"
+    else:
+        transcript, transcript_source = fetch_best_transcript(
+            video,
+            debug_enabled=args.debug_transcript,
+        )
     contexts = extract_ticker_context(transcript, parse_watchlist(args.watchlist)) if transcript else []
     message = format_context_message(
         video=video,
