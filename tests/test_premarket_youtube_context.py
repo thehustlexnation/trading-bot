@@ -48,7 +48,7 @@ def test_format_context_message_handles_missing_transcript():
     )
 
     assert "Pre-market video context" in message
-    assert "Transcript/captions were not available yet" in message
+    assert "Transcript/captions were not available" in message
     assert "context only" in message
 
 

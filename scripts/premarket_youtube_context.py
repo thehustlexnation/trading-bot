@@ -18,7 +18,7 @@ if str(ROOT_DIR) not in sys.path:
 from paper_trading.notifications import notify_discord
 
 
-DEFAULT_CHANNEL_URL = "https://www.youtube.com/@JdubTrades/streams"
+DEFAULT_CHANNEL_URL = "https://www.youtube.com/@VincentDesiano/streams"
 DEFAULT_WATCHLIST = (
     "AAPL,NVDA,SNDK,INTC,GOOGL,MSFT,AMZN,META,TSLA,AMD,AVGO,"
     "JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,SPY,QQQ,IWM"
@@ -319,8 +319,8 @@ def format_context_message(
         lines.extend(
             [
                 "",
-                "Transcript/captions were not available yet, so I could not analyze the video automatically.",
-                "Try again later or paste the video link after captions appear.",
+                "Transcript/captions were not available or YouTube temporarily blocked the caption request.",
+                "Try again later, paste a direct video link, or run from GitHub Actions/cron where YouTube may allow the request.",
             ]
         )
         return "\n".join(lines)

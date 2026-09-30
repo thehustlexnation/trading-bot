@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: Optional direct YouTube video URL. Leave empty to use latest JdubTrades stream/video.
+        description: Optional direct YouTube video URL. Leave empty to use latest Vincent Desiano stream/video.
         required: false
         default: ""
       watchlist:
