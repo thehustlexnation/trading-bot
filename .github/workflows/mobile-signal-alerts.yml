@@ -65,6 +65,20 @@ jobs:
             --end "$NEWS_END" \
             --discord
 
+      - name: Check stock catalyst risk
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,SNDK,INTC,GOOGL,QQQ' }}"
+          HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
+          WATCHLIST="$SYMBOLS,$HTF_SYMBOLS"
+          python scripts/stock_catalyst_risk.py \
+            --symbols "$WATCHLIST" \
+            --lookback-days 1 \
+            --lookahead-days 7 \
+            --discord
+
       - name: Run live dry-run signal watcher
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
