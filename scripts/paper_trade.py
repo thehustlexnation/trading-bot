@@ -53,7 +53,7 @@ NY_TZ = ZoneInfo("America/New_York")
 ORB_BODY_STRATEGY_VERSION = "ORB_RETEST_RECLAIM_BODY_2R"
 DEFAULT_HTF_SYMBOLS = (
     "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,"
-    "JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE"
+    "JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ"
 )
 
 
@@ -75,8 +75,8 @@ def parse_args():
     parser.add_argument("--symbols", default=None, help="Comma-separated symbols to scan in watch mode.")
     parser.add_argument(
         "--htf-symbols",
-        default=None,
-        help="Comma-separated symbols for HTF_BREAKOUT_RETEST_2R. Defaults to --symbols when omitted.",
+        default=DEFAULT_HTF_SYMBOLS,
+        help="Comma-separated symbols for HTF_BREAKOUT_RETEST_2R.",
     )
     parser.add_argument(
         "--strategies",
