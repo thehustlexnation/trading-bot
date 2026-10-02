@@ -360,11 +360,84 @@ def format_watch_skipped_message(
     )
 
 
+def calculate_intraday_change(session_df: pd.DataFrame) -> float | None:
+    if session_df.empty:
+        return None
+    df = session_df.sort_values("timestamp_ny")
+    first_open = float(df.iloc[0]["open"])
+    last_close = float(df.iloc[-1]["close"])
+    if first_open <= 0:
+        return None
+    return (last_close - first_open) / first_open
+
+
+def build_relative_strength_context(
+    symbol: str,
+    position_side: str,
+    symbol_session_df: pd.DataFrame,
+    benchmark_session_df: pd.DataFrame,
+    benchmark_symbol: str = "QQQ",
+) -> dict | None:
+    symbol_change = calculate_intraday_change(symbol_session_df)
+    benchmark_change = calculate_intraday_change(benchmark_session_df)
+    if symbol_change is None or benchmark_change is None:
+        return None
+
+    relative_change = symbol_change - benchmark_change
+    if abs(relative_change) < 0.001:
+        alignment = "neutral"
+    elif position_side == "long":
+        alignment = "aligned" if relative_change > 0 else "against"
+    else:
+        alignment = "aligned" if relative_change < 0 else "against"
+
+    return {
+        "symbol": symbol.upper(),
+        "benchmark_symbol": benchmark_symbol.upper(),
+        "symbol_change": symbol_change,
+        "benchmark_change": benchmark_change,
+        "relative_change": relative_change,
+        "alignment": alignment,
+    }
+
+
+def signal_quality_from_context(signal: dict) -> tuple[str, str]:
+    relative_strength = signal.get("relative_strength")
+    if not relative_strength:
+        return "B", "Strategy setup confirmed. Market-relative context unavailable."
+
+    alignment = relative_strength.get("alignment")
+    if alignment == "aligned":
+        return "A", "Strategy setup confirmed and stock is stronger/weaker than benchmark in the trade direction."
+    if alignment == "against":
+        return "C", "Strategy setup confirmed, but relative strength is against the trade direction."
+    return "B", "Strategy setup confirmed; relative strength is neutral."
+
+
+def format_relative_strength_context(signal: dict) -> str:
+    relative_strength = signal.get("relative_strength")
+    if not relative_strength:
+        return "- Relative strength: unavailable"
+
+    symbol = relative_strength["symbol"]
+    benchmark = relative_strength["benchmark_symbol"]
+    symbol_change = relative_strength["symbol_change"] * 100
+    benchmark_change = relative_strength["benchmark_change"] * 100
+    relative_change = relative_strength["relative_change"] * 100
+    alignment = relative_strength["alignment"]
+    return (
+        f"- Relative strength: {alignment} vs {benchmark} "
+        f"({symbol} {symbol_change:+.2f}%, {benchmark} {benchmark_change:+.2f}%, "
+        f"spread {relative_change:+.2f}%)"
+    )
+
+
 def format_approved_message(args, decision, dry_run: bool) -> str:
     plan = decision.plan
     signal = decision.signal or {}
     mode = "DRY RUN" if dry_run else "PAPER SUBMIT"
     action = "BUY / go LONG" if plan.entry_side == "buy" else "SELL SHORT"
+    quality, quality_reason = signal_quality_from_context(signal)
     breakout_time = signal.get("breakout_timestamp", "n/a")
     retest_time = signal.get("retest_timestamp", "n/a")
     pullback_time = signal.get("pullback_timestamp", "n/a")
@@ -397,6 +470,9 @@ def format_approved_message(args, decision, dry_run: bool) -> str:
         f"{mode} TRADE ALERT - {args.symbol.upper()}\n\n"
         f"What happened: {what_happened}\n"
         f"Suggested action: {action}\n\n"
+        f"Signal quality: {quality}\n"
+        f"- {quality_reason}\n"
+        f"{format_relative_strength_context(signal)}\n\n"
         f"Manual order details:\n"
         f"- Shares: {plan.quantity}\n"
         f"- Entry reference: {plan.entry_price_reference:.2f}\n"
@@ -714,6 +790,34 @@ def filter_expected_session_minutes(df: pd.DataFrame, trading_date) -> tuple[pd.
     return scheduled_df.sort_values("timestamp_ny"), report
 
 
+def enrich_decision_with_market_context(args, trading_date, decision, session_df: pd.DataFrame) -> None:
+    if decision is None or decision.plan is None or decision.signal is None:
+        return
+
+    benchmark_symbol = "SPY" if args.symbol.upper() == "QQQ" else "QQQ"
+    try:
+        if args.source == "live":
+            benchmark_df = load_live_session(benchmark_symbol, trading_date)
+        else:
+            benchmark_df = load_db_session(benchmark_symbol, trading_date)
+        benchmark_df, _ = filter_expected_session_minutes(
+            benchmark_df,
+            trading_date,
+        )
+    except Exception:
+        return
+
+    context = build_relative_strength_context(
+        symbol=args.symbol,
+        position_side=decision.plan.position_side,
+        symbol_session_df=session_df,
+        benchmark_session_df=benchmark_df,
+        benchmark_symbol=benchmark_symbol,
+    )
+    if context:
+        decision.signal["relative_strength"] = context
+
+
 def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -> tuple[str, object | None]:
     dry_run = not args.submit
 
@@ -799,6 +903,13 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
             )
         )
         return decision.reason, decision
+
+    enrich_decision_with_market_context(
+        args=args,
+        trading_date=trading_date,
+        decision=decision,
+        session_df=session_df,
+    )
 
     if args.submit:
         if trading_client is None:

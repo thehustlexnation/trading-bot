@@ -9,7 +9,9 @@ from scripts.paper_trade import (
     VWAP_PULLBACK_STRATEGY_VERSION,
     WatchedTrade,
     build_approval_url,
+    build_relative_strength_context,
     build_strategy_lanes,
+    calculate_intraday_change,
     evaluate_watched_trade,
     format_watched_trade_cutoff_result,
     format_approved_message,
@@ -63,11 +65,40 @@ def test_format_approved_message_is_readable_for_manual_execution():
 
     assert "DRY RUN TRADE ALERT - AAPL" in message
     assert "Suggested action: BUY / go LONG" in message
+    assert "Signal quality: B" in message
+    assert "Relative strength: unavailable" in message
     assert "Shares: 13" in message
     assert "Entry reference: 182.68" in message
     assert "Stop loss: 181.75" in message
     assert "Take profit: 184.53" in message
     assert "This GitHub alert does not place the trade" in message
+
+
+def test_format_approved_message_includes_relative_strength_quality():
+    message = format_approved_message(
+        args=FakeArgs(symbol="NVDA"),
+        decision=FakeDecision(
+            plan=FakePlan(symbol="NVDA"),
+            signal={
+                "breakout_timestamp": "2024-01-05 09:35",
+                "retest_timestamp": "2024-01-05 09:36",
+                "confirmation_timestamp": "2024-01-05 09:36",
+                "relative_strength": {
+                    "symbol": "NVDA",
+                    "benchmark_symbol": "QQQ",
+                    "symbol_change": 0.012,
+                    "benchmark_change": 0.004,
+                    "relative_change": 0.008,
+                    "alignment": "aligned",
+                },
+            },
+        ),
+        dry_run=True,
+    )
+
+    assert "Signal quality: A" in message
+    assert "Relative strength: aligned vs QQQ" in message
+    assert "NVDA +1.20%" in message
 
 
 def test_format_watch_started_message_groups_strategy_lanes():
@@ -89,6 +120,54 @@ def test_format_watch_started_message_groups_strategy_lanes():
     assert "VWAP pullback: AAPL, NVDA, SNDK" in message
     assert "HTF breakout: AAPL, MSFT, NVDA, AMZN" in message
     assert "No-trade reasons will be grouped" in message
+
+
+def test_calculate_intraday_change_uses_first_open_and_last_close():
+    df = pd.DataFrame(
+        {
+            "timestamp_ny": [
+                pd.Timestamp("2026-10-02 09:30", tz="America/New_York"),
+                pd.Timestamp("2026-10-02 09:31", tz="America/New_York"),
+            ],
+            "open": [100.0, 101.0],
+            "close": [101.0, 103.0],
+        }
+    )
+
+    assert calculate_intraday_change(df) == 0.03
+
+
+def test_build_relative_strength_context_scores_long_alignment():
+    symbol_df = pd.DataFrame(
+        {
+            "timestamp_ny": [
+                pd.Timestamp("2026-10-02 09:30", tz="America/New_York"),
+                pd.Timestamp("2026-10-02 09:31", tz="America/New_York"),
+            ],
+            "open": [100.0, 102.0],
+            "close": [101.0, 104.0],
+        }
+    )
+    benchmark_df = pd.DataFrame(
+        {
+            "timestamp_ny": [
+                pd.Timestamp("2026-10-02 09:30", tz="America/New_York"),
+                pd.Timestamp("2026-10-02 09:31", tz="America/New_York"),
+            ],
+            "open": [100.0, 100.5],
+            "close": [100.2, 101.0],
+        }
+    )
+
+    context = build_relative_strength_context(
+        symbol="NVDA",
+        position_side="long",
+        symbol_session_df=symbol_df,
+        benchmark_session_df=benchmark_df,
+    )
+
+    assert context["alignment"] == "aligned"
+    assert round(context["relative_change"], 4) == 0.03
 
 
 def test_format_watch_recap_groups_stopped_reasons():
