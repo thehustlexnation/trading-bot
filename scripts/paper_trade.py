@@ -370,11 +370,14 @@ def format_approved_message(args, decision, dry_run: bool) -> str:
     pullback_time = signal.get("pullback_timestamp", "n/a")
     confirmation_time = signal.get("confirmation_timestamp", "n/a")
     if plan.strategy_version == VWAP_PULLBACK_STRATEGY_VERSION:
+        vwap_reference = signal.get("vwap", "n/a")
+        if isinstance(vwap_reference, float):
+            vwap_reference = f"{vwap_reference:.2f}"
         what_happened = "VWAP trend pullback and confirmation detected."
         timing_lines = (
             f"- Pullback: {pullback_time}\n"
             f"- Confirmation: {confirmation_time}\n"
-            f"- VWAP reference: {signal.get('vwap', 'n/a')}"
+            f"- VWAP reference: {vwap_reference}"
         )
     elif plan.strategy_version == HTF_BREAKOUT_STRATEGY_VERSION:
         what_happened = "Higher-timeframe resistance breakout, retest, and confirmation detected."
