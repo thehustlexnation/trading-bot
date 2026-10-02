@@ -19,6 +19,14 @@ on:
         description: HTF strategy symbols, comma-separated
         required: true
         default: AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ
+      news_start:
+        description: New York start time for economic news risk check
+        required: false
+        default: "08:00"
+      news_end:
+        description: New York end time for economic news risk check
+        required: false
+        default: "10:30"
 
 concurrency:
   group: mobile-signal-alerts-${{ github.ref }}
@@ -43,6 +51,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install alpaca-py python-dotenv pandas sqlalchemy psycopg2-binary pytest
+
+      - name: Check ForexFactory news risk
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          NEWS_START="${{ github.event.inputs.news_start || '08:00' }}"
+          NEWS_END="${{ github.event.inputs.news_end || '10:30' }}"
+          python scripts/forexfactory_news_risk.py \
+            --countries USD \
+            --impacts High \
+            --start "$NEWS_START" \
+            --end "$NEWS_END" \
+            --discord
 
       - name: Run live dry-run signal watcher
         env:
