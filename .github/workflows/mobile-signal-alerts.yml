@@ -14,7 +14,7 @@ on:
       strategies:
         description: Strategy lanes to scan, comma-separated
         required: true
-        default: ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R
+        default: ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_TREND_PULLBACK_2R
       htf_symbols:
         description: HTF strategy symbols, comma-separated
         required: true
@@ -54,7 +54,7 @@ jobs:
         run: |
           SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,SNDK,INTC,GOOGL' }}"
           CUTOFF="${{ github.event.inputs.cutoff || '10:15' }}"
-          STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R' }}"
+          STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_TREND_PULLBACK_2R' }}"
           HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE' }}"
           python scripts/paper_trade.py \
             --symbols "$SYMBOLS" \

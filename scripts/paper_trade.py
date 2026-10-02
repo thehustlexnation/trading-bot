@@ -35,6 +35,11 @@ from paper_trading.notifications import (
     notify_telegram,
 )
 from paper_trading.signal_builder import build_retest_body_paper_trade_decision
+from paper_trading.vwap_pullback import (
+    STRATEGY_VERSION as VWAP_PULLBACK_STRATEGY_VERSION,
+    VWAPPullbackConfig,
+    build_vwap_pullback_paper_trade_decision,
+)
 from strategy.market_calendar import (
     SessionQuality,
     compare_session_minutes,
@@ -75,7 +80,11 @@ def parse_args():
     )
     parser.add_argument(
         "--strategies",
-        default=f"{ORB_BODY_STRATEGY_VERSION},{HTF_BREAKOUT_STRATEGY_VERSION}",
+        default=(
+            f"{ORB_BODY_STRATEGY_VERSION},"
+            f"{HTF_BREAKOUT_STRATEGY_VERSION},"
+            f"{VWAP_PULLBACK_STRATEGY_VERSION}"
+        ),
         help="Comma-separated strategy lanes to scan.",
     )
     parser.add_argument("--date", default=None, help="YYYY-MM-DD, defaults to today in New York.")
@@ -132,6 +141,7 @@ def parse_strategies(strategies: str) -> list[str]:
     allowed = {
         ORB_BODY_STRATEGY_VERSION,
         HTF_BREAKOUT_STRATEGY_VERSION,
+        VWAP_PULLBACK_STRATEGY_VERSION,
     }
     unknown = sorted(set(parsed) - allowed)
     if unknown:
@@ -303,16 +313,28 @@ def format_watch_started_message(
     args,
     dry_run: bool,
 ) -> str:
-    return (
-        f"Trading watch started\n\n"
-        f"Mode: {'DRY RUN - alerts only' if dry_run else 'PAPER SUBMIT'}\n"
-        f"Cutoff: {args.cutoff} New York\n\n"
-        f"Strategy lanes:\n"
-        f"- ORB retest: {_format_symbol_list(symbols)}\n"
-        f"- HTF breakout: {_format_symbol_list(htf_symbols)}\n\n"
-        f"I will send trade alerts immediately. No-trade reasons will be grouped "
-        f"into a recap so Discord stays readable."
+    lines = [
+        "Trading watch started",
+        "",
+        f"Mode: {'DRY RUN - alerts only' if dry_run else 'PAPER SUBMIT'}",
+        f"Cutoff: {args.cutoff} New York",
+        "",
+        "Strategy lanes:",
+    ]
+    if ORB_BODY_STRATEGY_VERSION in strategies:
+        lines.append(f"- ORB retest: {_format_symbol_list(symbols)}")
+    if VWAP_PULLBACK_STRATEGY_VERSION in strategies:
+        lines.append(f"- VWAP pullback: {_format_symbol_list(symbols)}")
+    if HTF_BREAKOUT_STRATEGY_VERSION in strategies:
+        lines.append(f"- HTF breakout: {_format_symbol_list(htf_symbols)}")
+    lines.extend(
+        [
+            "",
+            "I will send trade alerts immediately. No-trade reasons will be grouped "
+            "into a recap so Discord stays readable.",
+        ]
     )
+    return "\n".join(lines)
 
 
 def format_watch_skipped_message(
@@ -345,10 +367,32 @@ def format_approved_message(args, decision, dry_run: bool) -> str:
     action = "BUY / go LONG" if plan.entry_side == "buy" else "SELL SHORT"
     breakout_time = signal.get("breakout_timestamp", "n/a")
     retest_time = signal.get("retest_timestamp", "n/a")
+    pullback_time = signal.get("pullback_timestamp", "n/a")
     confirmation_time = signal.get("confirmation_timestamp", "n/a")
+    if plan.strategy_version == VWAP_PULLBACK_STRATEGY_VERSION:
+        what_happened = "VWAP trend pullback and confirmation detected."
+        timing_lines = (
+            f"- Pullback: {pullback_time}\n"
+            f"- Confirmation: {confirmation_time}\n"
+            f"- VWAP reference: {signal.get('vwap', 'n/a')}"
+        )
+    elif plan.strategy_version == HTF_BREAKOUT_STRATEGY_VERSION:
+        what_happened = "Higher-timeframe resistance breakout, retest, and confirmation detected."
+        timing_lines = (
+            f"- Breakout: {breakout_time}\n"
+            f"- Retest: {retest_time}\n"
+            f"- Confirmation: {confirmation_time}"
+        )
+    else:
+        what_happened = "Opening range breakout, retest, and confirmation detected."
+        timing_lines = (
+            f"- Breakout: {breakout_time}\n"
+            f"- Retest: {retest_time}\n"
+            f"- Confirmation: {confirmation_time}"
+        )
     return (
         f"{mode} TRADE ALERT - {args.symbol.upper()}\n\n"
-        f"What happened: Opening range breakout, retest, and confirmation detected.\n"
+        f"What happened: {what_happened}\n"
         f"Suggested action: {action}\n\n"
         f"Manual order details:\n"
         f"- Shares: {plan.quantity}\n"
@@ -358,9 +402,7 @@ def format_approved_message(args, decision, dry_run: bool) -> str:
         f"- Planned max risk: ${plan.planned_risk_dollars:.2f}\n"
         f"- Approx position value: ${plan.notional_dollars:.2f}\n\n"
         f"Signal timing:\n"
-        f"- Breakout: {breakout_time}\n"
-        f"- Retest: {retest_time}\n"
-        f"- Confirmation: {confirmation_time}\n\n"
+        f"{timing_lines}\n\n"
         f"Reminder: This GitHub alert does not place the trade. "
         f"Only enter manually if the order still makes sense in Alpaca."
     )
@@ -381,7 +423,7 @@ def format_watch_recap_message(
     if approved_lanes:
         lines.extend(["", "Trade alerts sent:"])
         for symbol, strategy in sorted(approved_lanes):
-            label = "ORB retest" if strategy == ORB_BODY_STRATEGY_VERSION else "HTF breakout"
+            label = _strategy_label(strategy)
             lines.append(f"- {symbol}: {label}")
     else:
         lines.extend(["", "Trade alerts sent: none"])
@@ -390,14 +432,14 @@ def format_watch_recap_message(
         lines.extend(["", "No-trade / stopped reasons:"])
         for reason in sorted(stopped_reasons):
             lane_labels = [
-                f"{symbol} ({'ORB' if strategy == ORB_BODY_STRATEGY_VERSION else 'HTF'})"
+                f"{symbol} ({_strategy_short_label(strategy)})"
                 for symbol, strategy in sorted(stopped_reasons[reason])
             ]
             lines.append(f"- {reason}: {_format_symbol_list(lane_labels, max_items=6)}")
 
     if active_lanes:
         lane_labels = [
-            f"{symbol} ({'ORB' if strategy == ORB_BODY_STRATEGY_VERSION else 'HTF'})"
+            f"{symbol} ({_strategy_short_label(strategy)})"
             for symbol, strategy in sorted(active_lanes)
         ]
         lines.extend(["", "Still had no approved signal by cutoff:"])
@@ -413,7 +455,23 @@ def format_watch_recap_message(
 
 
 def _strategy_label(strategy: str) -> str:
-    return "ORB retest" if strategy == ORB_BODY_STRATEGY_VERSION else "HTF breakout"
+    if strategy == ORB_BODY_STRATEGY_VERSION:
+        return "ORB retest"
+    if strategy == HTF_BREAKOUT_STRATEGY_VERSION:
+        return "HTF breakout"
+    if strategy == VWAP_PULLBACK_STRATEGY_VERSION:
+        return "VWAP pullback"
+    return strategy
+
+
+def _strategy_short_label(strategy: str) -> str:
+    if strategy == ORB_BODY_STRATEGY_VERSION:
+        return "ORB"
+    if strategy == HTF_BREAKOUT_STRATEGY_VERSION:
+        return "HTF"
+    if strategy == VWAP_PULLBACK_STRATEGY_VERSION:
+        return "VWAP"
+    return strategy
 
 
 def _tracking_start_time(decision) -> object:
@@ -708,6 +766,15 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
             htf_config=HTFBreakoutConfig(),
             realized_daily_pnl=args.realized_daily_pnl,
         )
+    elif strategy_version == VWAP_PULLBACK_STRATEGY_VERSION:
+        decision = build_vwap_pullback_paper_trade_decision(
+            session_df=session_df,
+            symbol=args.symbol,
+            account_equity=account_equity,
+            paper_config=config,
+            vwap_config=VWAPPullbackConfig(),
+            realized_daily_pnl=args.realized_daily_pnl,
+        )
     else:
         raise ValueError(f"Unknown strategy lane: {strategy_version}")
 
@@ -921,7 +988,14 @@ def main():
                 active_lanes.remove((symbol, strategy))
                 continue
 
-            if reason not in {"SESSION_NOT_READY", "NO_VALID_SIGNAL"}:
+            non_terminal_reasons = {
+                "SESSION_NOT_READY",
+                "NO_VALID_SIGNAL",
+                "INSUFFICIENT_BARS",
+                "NO_VWAP_PULLBACK_CONFIRMATION",
+                "NO_ENTRY_CANDLE",
+            }
+            if reason not in non_terminal_reasons:
                 notify(
                     "Paper Trading Watch",
                     f"{symbol} stopped: {reason}",

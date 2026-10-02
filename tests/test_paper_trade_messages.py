@@ -6,6 +6,7 @@ import pytest
 from scripts.paper_trade import (
     HTF_BREAKOUT_STRATEGY_VERSION,
     ORB_BODY_STRATEGY_VERSION,
+    VWAP_PULLBACK_STRATEGY_VERSION,
     WatchedTrade,
     build_approval_url,
     build_strategy_lanes,
@@ -73,7 +74,11 @@ def test_format_watch_started_message_groups_strategy_lanes():
     message = format_watch_started_message(
         symbols=["AAPL", "NVDA", "SNDK"],
         htf_symbols=["AAPL", "MSFT", "NVDA", "AMZN"],
-        strategies=[ORB_BODY_STRATEGY_VERSION, HTF_BREAKOUT_STRATEGY_VERSION],
+        strategies=[
+            ORB_BODY_STRATEGY_VERSION,
+            HTF_BREAKOUT_STRATEGY_VERSION,
+            VWAP_PULLBACK_STRATEGY_VERSION,
+        ],
         args=FakeArgs(),
         dry_run=True,
     )
@@ -81,6 +86,7 @@ def test_format_watch_started_message_groups_strategy_lanes():
     assert "Trading watch started" in message
     assert "Mode: DRY RUN - alerts only" in message
     assert "ORB retest: AAPL, NVDA, SNDK" in message
+    assert "VWAP pullback: AAPL, NVDA, SNDK" in message
     assert "HTF breakout: AAPL, MSFT, NVDA, AMZN" in message
     assert "No-trade reasons will be grouped" in message
 
@@ -96,8 +102,14 @@ def test_format_watch_recap_groups_stopped_reasons():
             "NO_VALID_RESISTANCE": [
                 ("GOOGL", HTF_BREAKOUT_STRATEGY_VERSION),
             ],
+            "NO_VWAP_PULLBACK_CONFIRMATION": [
+                ("AAPL", VWAP_PULLBACK_STRATEGY_VERSION),
+            ],
         },
-        active_lanes={("SNDK", ORB_BODY_STRATEGY_VERSION)},
+        active_lanes={
+            ("SNDK", ORB_BODY_STRATEGY_VERSION),
+            ("NVDA", VWAP_PULLBACK_STRATEGY_VERSION),
+        },
         args=FakeArgs(),
     )
 
@@ -105,7 +117,9 @@ def test_format_watch_recap_groups_stopped_reasons():
     assert "AAPL: ORB retest" in message
     assert "NO_BREAKOUT: MSFT (HTF), NVDA (HTF)" in message
     assert "NO_VALID_RESISTANCE: GOOGL (HTF)" in message
+    assert "NO_VWAP_PULLBACK_CONFIRMATION: AAPL (VWAP)" in message
     assert "SNDK (ORB)" in message
+    assert "NVDA (VWAP)" in message
 
 
 def test_evaluate_watched_trade_sends_one_r_update_once():
@@ -228,10 +242,11 @@ def test_parse_symbols_rejects_empty_list():
 
 def test_parse_strategies_accepts_known_lanes():
     assert parse_strategies(
-        "ORB_RETEST_RECLAIM_BODY_2R, htf_breakout_retest_2r"
+        "ORB_RETEST_RECLAIM_BODY_2R, htf_breakout_retest_2r, vwap_trend_pullback_2r"
     ) == [
         "ORB_RETEST_RECLAIM_BODY_2R",
         "HTF_BREAKOUT_RETEST_2R",
+        "VWAP_TREND_PULLBACK_2R",
     ]
 
 
