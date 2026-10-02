@@ -432,6 +432,19 @@ def _r_multiple_at_price(plan, price: float) -> float:
     return (plan.entry_price_reference - price) / plan.risk_per_share
 
 
+def _estimated_trade_pnl(plan, r_multiple: float) -> float:
+    return plan.quantity * plan.risk_per_share * r_multiple
+
+
+def _plain_result_line(plan, price: float, r_multiple: float) -> str:
+    pnl = _estimated_trade_pnl(plan, r_multiple)
+    return (
+        f"Plain English: if you entered near {plan.entry_price_reference:.2f}, "
+        f"this was about {r_multiple:+.2f}R / ${pnl:+.2f} on {plan.quantity} shares "
+        f"at {price:.2f}."
+    )
+
+
 def evaluate_watched_trade(
     trade: WatchedTrade,
     session_df: pd.DataFrame,
@@ -469,6 +482,7 @@ def evaluate_watched_trade(
                 f"Strategy: {_strategy_label(trade.strategy)}\n"
                 f"Time: {timestamp}\n"
                 f"Result: -1.00R\n"
+                f"Estimated P/L: ${_estimated_trade_pnl(plan, -1.0):+.2f}\n"
                 f"Note: stop and target were both touched in the same 1-minute candle, "
                 f"so we use the conservative stop-first rule.",
                 True,
@@ -481,7 +495,9 @@ def evaluate_watched_trade(
                 f"Strategy: {_strategy_label(trade.strategy)}\n"
                 f"Time: {timestamp}\n"
                 f"Exit reference: {plan.stop_price:.2f}\n"
-                f"Result: -1.00R",
+                f"Result: -1.00R\n"
+                f"Estimated P/L: ${_estimated_trade_pnl(plan, -1.0):+.2f}\n"
+                f"{_plain_result_line(plan, plan.stop_price, -1.0)}",
                 True,
             )
 
@@ -492,7 +508,9 @@ def evaluate_watched_trade(
                 f"Strategy: {_strategy_label(trade.strategy)}\n"
                 f"Time: {timestamp}\n"
                 f"Exit reference: {plan.target_price:.2f}\n"
-                f"Result: +2.00R",
+                f"Result: +2.00R\n"
+                f"Estimated P/L: ${_estimated_trade_pnl(plan, 2.0):+.2f}\n"
+                f"{_plain_result_line(plan, plan.target_price, 2.0)}",
                 True,
             )
 
@@ -540,6 +558,8 @@ def format_watched_trade_cutoff_result(
         f"Cutoff: {cutoff} New York\n"
         f"Last checked close: {close:.2f}\n"
         f"Open trade result: {r_multiple:+.2f}R\n"
+        f"Estimated P/L if entered: ${_estimated_trade_pnl(plan, r_multiple):+.2f}\n"
+        f"{_plain_result_line(plan, close, r_multiple)}\n"
         f"Note: target and stop were not hit before the watch ended."
     )
 

@@ -168,6 +168,8 @@ def test_evaluate_watched_trade_reports_target_hit():
 
     assert "AAPL result: target hit" in message
     assert "Result: +2.00R" in message
+    assert "Estimated P/L: $+26.00" in message
+    assert "Plain English: if you entered near 100.00" in message
     assert terminal is True
     assert trade.closed is True
 
@@ -203,6 +205,8 @@ def test_format_watched_trade_cutoff_result_marks_open_result():
 
     assert "AAPL result: cutoff close" in message
     assert "Open trade result: +0.75R" in message
+    assert "Estimated P/L if entered: $+9.75" in message
+    assert "this was about +0.75R / $+9.75 on 13 shares at 100.75" in message
     assert trade.closed is True
 
 
