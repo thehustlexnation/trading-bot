@@ -208,7 +208,7 @@ def format_stock_catalyst_message(
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Check stock-specific earnings/news catalyst risk.")
-    parser.add_argument("--symbols", default="AAPL,NVDA,SNDK,INTC,GOOGL,QQQ")
+    parser.add_argument("--symbols", default="AAPL,NVDA,AMD,SNDK,INTC,GOOGL,QQQ")
     parser.add_argument("--date", default=None, help="YYYY-MM-DD, defaults to today in New York.")
     parser.add_argument("--lookback-days", type=int, default=1)
     parser.add_argument("--lookahead-days", type=int, default=7)

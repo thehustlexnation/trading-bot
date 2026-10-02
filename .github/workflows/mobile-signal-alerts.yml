@@ -6,7 +6,7 @@ on:
       symbol:
         description: Stock symbols to scan, comma-separated
         required: true
-        default: AAPL,NVDA,SNDK,INTC,GOOGL,QQQ
+        default: AAPL,NVDA,AMD,SNDK,INTC,GOOGL,QQQ
       cutoff:
         description: New York cutoff time
         required: true
@@ -70,7 +70,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,SNDK,INTC,GOOGL,QQQ' }}"
+          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,AMD,SNDK,INTC,GOOGL,QQQ' }}"
           HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
           WATCHLIST="$SYMBOLS,$HTF_SYMBOLS"
           python scripts/stock_catalyst_risk.py \
@@ -87,7 +87,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,SNDK,INTC,GOOGL,QQQ' }}"
+          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,AMD,SNDK,INTC,GOOGL,QQQ' }}"
           CUTOFF="${{ github.event.inputs.cutoff || '10:15' }}"
           STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_TREND_PULLBACK_2R' }}"
           HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
