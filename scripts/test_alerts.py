@@ -9,14 +9,15 @@ if str(ROOT_DIR) not in sys.path:
 
 from dotenv import load_dotenv
 
-from paper_trading.notifications import notify_discord, notify_email
+from paper_trading.notifications import notify_discord, notify_email, notify_slack
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Send a test alert through Discord and/or email."
+        description="Send a test alert through Discord, Slack, and/or email."
     )
     parser.add_argument("--discord", action="store_true")
+    parser.add_argument("--slack", action="store_true")
     parser.add_argument("--email", action="store_true")
     return parser.parse_args()
 
@@ -34,6 +35,13 @@ def main():
         )
         print(f"Discord sent: {sent}")
 
+    if args.slack:
+        sent = notify_slack(
+            webhook_url=os.getenv("SLACK_WEBHOOK_URL"),
+            message=message,
+        )
+        print(f"Slack sent: {sent}")
+
     if args.email:
         sent = notify_email(
             smtp_host=os.getenv("SMTP_HOST"),
@@ -47,8 +55,8 @@ def main():
         )
         print(f"Email sent: {sent}")
 
-    if not args.discord and not args.email:
-        print("Choose at least one channel: --discord and/or --email")
+    if not args.discord and not args.slack and not args.email:
+        print("Choose at least one channel: --discord, --slack, and/or --email")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from paper_trading.notifications import (
     notify,
     notify_discord,
     notify_email,
+    notify_slack,
     notify_telegram,
 )
 
@@ -52,6 +53,21 @@ def test_notify_discord_disabled_with_components_returns_false():
         "message",
         components=[{"type": 1, "components": []}],
         enabled=False,
+    )
+
+
+def test_notify_slack_disabled_returns_false():
+    assert not notify_slack(
+        "https://example.com/webhook",
+        "message",
+        enabled=False,
+    )
+
+
+def test_notify_slack_missing_webhook_returns_false():
+    assert not notify_slack(
+        None,
+        "message",
     )
 
 

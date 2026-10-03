@@ -32,6 +32,7 @@ from paper_trading.notifications import (
     notify,
     notify_discord,
     notify_email,
+    notify_slack,
     notify_telegram,
 )
 from paper_trading.signal_builder import build_retest_body_paper_trade_decision
@@ -118,6 +119,7 @@ def parse_args():
     parser.add_argument("--notify", action="store_true", help="Send macOS notifications for decisions.")
     parser.add_argument("--telegram", action="store_true", help="Send Telegram notifications using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
     parser.add_argument("--discord", action="store_true", help="Send Discord notifications using DISCORD_WEBHOOK_URL.")
+    parser.add_argument("--slack", action="store_true", help="Send Slack notifications using SLACK_WEBHOOK_URL.")
     parser.add_argument("--email", action="store_true", help="Send email notifications using SMTP_* secrets.")
     parser.add_argument("--alert-status", action="store_true", help="Send start and no-signal completion alerts.")
     parser.add_argument("--macro-news-start", default="08:00", help="New York HH:MM macro risk window start.")
@@ -303,6 +305,11 @@ def send_mobile_alert(args, message: str, components: list[dict] | None = None) 
         components=components,
         enabled=args.discord,
     ) or sent
+    sent = notify_slack(
+        webhook_url=os.getenv("SLACK_WEBHOOK_URL"),
+        message=message,
+        enabled=args.slack,
+    ) or sent
     sent = notify_email(
         smtp_host=os.getenv("SMTP_HOST"),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
@@ -349,7 +356,7 @@ def format_watch_started_message(
         [
             "",
             "I will send trade alerts immediately. No-trade reasons will be grouped "
-            "into a recap so Discord stays readable.",
+            "into a recap so alerts stay readable.",
         ]
     )
     return "\n".join(lines)

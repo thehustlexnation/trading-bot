@@ -99,6 +99,35 @@ def notify_discord(
         return False
 
 
+def notify_slack(
+    webhook_url: str | None,
+    message: str,
+    enabled: bool = True,
+) -> bool:
+    if not enabled:
+        return False
+    if not webhook_url:
+        return False
+
+    data = json.dumps({"text": message}).encode("utf-8")
+
+    request = urllib.request.Request(
+        webhook_url,
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "ai-trading-system",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return 200 <= response.status < 300
+    except OSError:
+        return False
+
+
 def notify_email(
     smtp_host: str | None,
     smtp_port: int | None,
