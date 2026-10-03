@@ -11,7 +11,7 @@ from paper_trading.broker import (
     create_alpaca_paper_trading_client,
     symbol_is_clear_to_trade,
 )
-from paper_trading.notifications import notify_discord
+from paper_trading.notifications import notify_slack
 from paper_trading.order_plan import build_fixed_risk_bracket_order_plan
 
 
@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument("--risk-dollars", type=float, required=True)
     parser.add_argument("--target-r", type=float, default=2.0)
     parser.add_argument("--submit-paper", action="store_true")
-    parser.add_argument("--discord-webhook-url", default=None)
+    parser.add_argument("--slack-webhook-url", default=None)
     return parser.parse_args()
 
 
@@ -97,10 +97,10 @@ def main():
     )
 
     print(message)
-    notify_discord(
-        webhook_url=args.discord_webhook_url,
+    notify_slack(
+        webhook_url=args.slack_webhook_url,
         message=message,
-        enabled=bool(args.discord_webhook_url),
+        enabled=bool(args.slack_webhook_url),
     )
 
 

@@ -13,7 +13,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from paper_trading.notifications import notify_discord, notify_slack
+from paper_trading.notifications import notify_slack
 
 
 NY_TZ = ZoneInfo("America/New_York")
@@ -213,7 +213,6 @@ def parse_args():
     parser.add_argument("--lookback-days", type=int, default=1)
     parser.add_argument("--lookahead-days", type=int, default=7)
     parser.add_argument("--skip-news", action="store_true")
-    parser.add_argument("--discord", action="store_true")
     parser.add_argument("--slack", action="store_true")
     return parser.parse_args()
 
@@ -270,11 +269,6 @@ def main():
         )
 
     print(message)
-    notify_discord(
-        webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
-        message=message,
-        enabled=args.discord,
-    )
     notify_slack(
         webhook_url=os.getenv("SLACK_WEBHOOK_URL"),
         message=message,

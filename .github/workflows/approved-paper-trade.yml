@@ -7,7 +7,7 @@ on:
         description: Stock symbol
         required: true
       strategy:
-        description: Strategy name from Discord alert
+        description: Strategy name from Slack alert
         required: true
       direction:
         description: LONG or SHORT
@@ -59,7 +59,7 @@ jobs:
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           TARGET="${{ github.event.inputs.target }}"
           SUBMIT_FLAG=""
@@ -80,4 +80,4 @@ jobs:
             --target-r "${{ github.event.inputs.target_r }}" \
             $TARGET_ARGS \
             $SUBMIT_FLAG \
-            --discord-webhook-url "$DISCORD_WEBHOOK_URL"
+            --slack-webhook-url "$SLACK_WEBHOOK_URL"

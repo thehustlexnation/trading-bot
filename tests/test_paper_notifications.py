@@ -1,6 +1,5 @@
 from paper_trading.notifications import (
     notify,
-    notify_discord,
     notify_email,
     notify_slack,
     notify_telegram,
@@ -29,30 +28,6 @@ def test_notify_telegram_missing_credentials_returns_false():
         None,
         "chat",
         "message",
-    )
-
-
-def test_notify_discord_disabled_returns_false():
-    assert not notify_discord(
-        "https://example.com/webhook",
-        "message",
-        enabled=False,
-    )
-
-
-def test_notify_discord_missing_webhook_returns_false():
-    assert not notify_discord(
-        None,
-        "message",
-    )
-
-
-def test_notify_discord_disabled_with_components_returns_false():
-    assert not notify_discord(
-        "https://example.com/webhook",
-        "message",
-        components=[{"type": 1, "components": []}],
-        enabled=False,
     )
 
 

@@ -54,7 +54,6 @@ jobs:
 
       - name: Check ForexFactory news risk
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           NEWS_START="${{ github.event.inputs.news_start || '08:00' }}"
@@ -64,12 +63,10 @@ jobs:
             --impacts High \
             --start "$NEWS_START" \
             --end "$NEWS_END" \
-            --discord \
             --slack
 
       - name: Check stock catalyst risk
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
@@ -80,7 +77,6 @@ jobs:
             --symbols "$WATCHLIST" \
             --lookback-days 1 \
             --lookahead-days 7 \
-            --discord \
             --slack
 
       - name: Run live dry-run signal watcher
@@ -89,7 +85,6 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,AMD,SNDK,INTC,GOOGL,QQQ' }}"
@@ -104,7 +99,6 @@ jobs:
             --strategies "$STRATEGIES" \
             --source live \
             --watch \
-            --discord \
             --slack \
             --alert-status \
             --poll-seconds 60 \

@@ -15,7 +15,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from paper_trading.notifications import notify_discord
+from paper_trading.notifications import notify_slack
 
 
 DEFAULT_CHANNEL_URL = "https://www.youtube.com/@VincentDesiano/streams"
@@ -420,7 +420,7 @@ def parse_args():
         help="Optional transcript/caption text. If provided, YouTube caption fetching is skipped.",
     )
     parser.add_argument("--watchlist", default=DEFAULT_WATCHLIST)
-    parser.add_argument("--discord", action="store_true")
+    parser.add_argument("--slack", action="store_true")
     parser.add_argument("--debug-transcript", action="store_true")
     return parser.parse_args()
 
@@ -448,10 +448,10 @@ def main():
             "Try again later or run with --video-url."
         )
         print(message)
-        notify_discord(
-            webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
+        notify_slack(
+            webhook_url=os.getenv("SLACK_WEBHOOK_URL"),
             message=message,
-            enabled=args.discord,
+            enabled=args.slack,
         )
         return
 
@@ -471,10 +471,10 @@ def main():
         transcript_source=transcript_source,
     )
     print(message)
-    notify_discord(
-        webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
+    notify_slack(
+        webhook_url=os.getenv("SLACK_WEBHOOK_URL"),
         message=message,
-        enabled=args.discord,
+        enabled=args.slack,
     )
 
 

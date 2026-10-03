@@ -37,7 +37,7 @@ jobs:
 
       - name: Analyze latest premarket video
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           VIDEO_URL: ${{ github.event.inputs.video_url }}
           TRANSCRIPT_TEXT: ${{ github.event.inputs.transcript_text }}
           WATCHLIST: ${{ github.event.inputs.watchlist }}
@@ -47,12 +47,12 @@ jobs:
               --video-url "$VIDEO_URL" \
               --watchlist "$WATCHLIST" \
               --transcript-text "$TRANSCRIPT_TEXT" \
-              --discord \
+              --slack \
               --debug-transcript
           else
             python scripts/premarket_youtube_context.py \
               --watchlist "$WATCHLIST" \
               --transcript-text "$TRANSCRIPT_TEXT" \
-              --discord \
+              --slack \
               --debug-transcript
           fi

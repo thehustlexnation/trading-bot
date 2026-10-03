@@ -30,7 +30,6 @@ from paper_trading.htf_breakout import (
 )
 from paper_trading.notifications import (
     notify,
-    notify_discord,
     notify_email,
     notify_slack,
     notify_telegram,
@@ -118,7 +117,6 @@ def parse_args():
     parser.add_argument("--cutoff", default="10:15", help="New York HH:MM stop time for watch mode.")
     parser.add_argument("--notify", action="store_true", help="Send macOS notifications for decisions.")
     parser.add_argument("--telegram", action="store_true", help="Send Telegram notifications using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
-    parser.add_argument("--discord", action="store_true", help="Send Discord notifications using DISCORD_WEBHOOK_URL.")
     parser.add_argument("--slack", action="store_true", help="Send Slack notifications using SLACK_WEBHOOK_URL.")
     parser.add_argument("--email", action="store_true", help="Send email notifications using SMTP_* secrets.")
     parser.add_argument("--alert-status", action="store_true", help="Send start and no-signal completion alerts.")
@@ -253,58 +251,13 @@ def build_approval_url(args, decision, risk_dollars: float, submit_paper: bool) 
     return f"{base_url.rstrip('/')}/approve?{query}"
 
 
-def build_discord_approval_components(args, decision) -> list[dict] | None:
-    dry_run_url = build_approval_url(
-        args=args,
-        decision=decision,
-        risk_dollars=100.0,
-        submit_paper=False,
-    )
-    paper_url = build_approval_url(
-        args=args,
-        decision=decision,
-        risk_dollars=100.0,
-        submit_paper=True,
-    )
-    if not dry_run_url and not paper_url:
-        return None
-
-    buttons = []
-    if dry_run_url:
-        buttons.append(
-            {
-                "type": 2,
-                "style": 5,
-                "label": "Dry-run $100",
-                "url": dry_run_url,
-            }
-        )
-    if paper_url:
-        buttons.append(
-            {
-                "type": 2,
-                "style": 5,
-                "label": "Approve Paper $100",
-                "url": paper_url,
-            }
-        )
-
-    return [{"type": 1, "components": buttons}]
-
-
-def send_mobile_alert(args, message: str, components: list[dict] | None = None) -> bool:
+def send_mobile_alert(args, message: str) -> bool:
     sent = notify_telegram(
         bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
         chat_id=os.getenv("TELEGRAM_CHAT_ID"),
         message=message,
         enabled=args.telegram,
     )
-    sent = notify_discord(
-        webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
-        message=message,
-        components=components,
-        enabled=args.discord,
-    ) or sent
     sent = notify_slack(
         webhook_url=os.getenv("SLACK_WEBHOOK_URL"),
         message=message,
@@ -1261,10 +1214,6 @@ def main():
                             decision,
                             dry_run,
                             macro_risk_context=macro_risk_context,
-                        ),
-                        components=build_discord_approval_components(
-                            symbol_args,
-                            decision,
                         ),
                     )
                     watched_trades.append(
