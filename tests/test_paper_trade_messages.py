@@ -7,6 +7,7 @@ from scripts.paper_trade import (
     HTF_BREAKOUT_STRATEGY_VERSION,
     ORB_BODY_STRATEGY_VERSION,
     VWAP_PULLBACK_STRATEGY_VERSION,
+    TradeOutcome,
     WatchedTrade,
     build_approval_url,
     build_relative_strength_context,
@@ -190,10 +191,37 @@ def test_format_watch_recap_groups_stopped_reasons():
             ("NVDA", VWAP_PULLBACK_STRATEGY_VERSION),
         },
         args=FakeArgs(),
+        trade_outcomes=[
+            TradeOutcome(
+                symbol="AAPL",
+                strategy=ORB_BODY_STRATEGY_VERSION,
+                outcome="cutoff close",
+                r_multiple=0.75,
+                estimated_pnl=9.75,
+            ),
+            TradeOutcome(
+                symbol="NVDA",
+                strategy=VWAP_PULLBACK_STRATEGY_VERSION,
+                outcome="target hit",
+                r_multiple=2.0,
+                estimated_pnl=48.20,
+            ),
+            TradeOutcome(
+                symbol="AMD",
+                strategy=HTF_BREAKOUT_STRATEGY_VERSION,
+                outcome="stop hit",
+                r_multiple=-1.0,
+                estimated_pnl=-22.10,
+            ),
+        ],
     )
 
     assert "Trading watch recap" in message
     assert "AAPL: ORB retest" in message
+    assert "Trade results:" in message
+    assert "AAPL: ORB retest, cutoff close, +0.75R / $+9.75" in message
+    assert "NVDA: VWAP pullback, target hit, +2.00R / $+48.20" in message
+    assert "AMD: HTF breakout, stop hit, -1.00R / $-22.10" in message
     assert "NO_BREAKOUT: MSFT (HTF), NVDA (HTF)" in message
     assert "NO_VALID_RESISTANCE: GOOGL (HTF)" in message
     assert "NO_VWAP_PULLBACK_CONFIRMATION: AAPL (VWAP)" in message
@@ -225,13 +253,15 @@ def test_evaluate_watched_trade_sends_one_r_update_once():
         }
     )
 
-    message, terminal = evaluate_watched_trade(trade, session_df)
-    repeat_message, repeat_terminal = evaluate_watched_trade(trade, session_df)
+    message, terminal, outcome = evaluate_watched_trade(trade, session_df)
+    repeat_message, repeat_terminal, repeat_outcome = evaluate_watched_trade(trade, session_df)
 
     assert "AAPL update: +1R reached" in message
     assert terminal is False
+    assert outcome is None
     assert repeat_message is None
     assert repeat_terminal is False
+    assert repeat_outcome is None
 
 
 def test_evaluate_watched_trade_reports_target_hit():
@@ -257,13 +287,16 @@ def test_evaluate_watched_trade_reports_target_hit():
         }
     )
 
-    message, terminal = evaluate_watched_trade(trade, session_df)
+    message, terminal, outcome = evaluate_watched_trade(trade, session_df)
 
     assert "AAPL result: target hit" in message
     assert "Result: +2.00R" in message
     assert "Estimated P/L: $+26.00" in message
     assert "Plain English: if you entered near 100.00" in message
     assert terminal is True
+    assert outcome.outcome == "target hit"
+    assert outcome.r_multiple == 2.0
+    assert outcome.estimated_pnl == 26.0
     assert trade.closed is True
 
 
@@ -290,7 +323,7 @@ def test_format_watched_trade_cutoff_result_marks_open_result():
         }
     )
 
-    message = format_watched_trade_cutoff_result(
+    message, outcome = format_watched_trade_cutoff_result(
         trade,
         session_df,
         cutoff="10:15",
@@ -300,6 +333,9 @@ def test_format_watched_trade_cutoff_result_marks_open_result():
     assert "Open trade result: +0.75R" in message
     assert "Estimated P/L if entered: $+9.75" in message
     assert "this was about +0.75R / $+9.75 on 13 shares at 100.75" in message
+    assert outcome.outcome == "cutoff close"
+    assert outcome.r_multiple == 0.75
+    assert outcome.estimated_pnl == 9.75
     assert trade.closed is True
 
 

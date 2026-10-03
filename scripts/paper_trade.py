@@ -67,6 +67,15 @@ class WatchedTrade:
     closed: bool = False
 
 
+@dataclass(frozen=True)
+class TradeOutcome:
+    symbol: str
+    strategy: str
+    outcome: str
+    r_multiple: float
+    estimated_pnl: float
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Dry-run or submit one paper ORB retest bracket order."
@@ -492,6 +501,7 @@ def format_watch_recap_message(
     stopped_reasons: dict[str, list[tuple[str, str]]],
     active_lanes: set[tuple[str, str]],
     args,
+    trade_outcomes: list[TradeOutcome] | None = None,
 ) -> str:
     lines = [
         "Trading watch recap",
@@ -506,6 +516,15 @@ def format_watch_recap_message(
             lines.append(f"- {symbol}: {label}")
     else:
         lines.extend(["", "Trade alerts sent: none"])
+
+    if trade_outcomes:
+        lines.extend(["", "Trade results:"])
+        for outcome in trade_outcomes:
+            lines.append(
+                f"- {outcome.symbol}: {_strategy_label(outcome.strategy)}, "
+                f"{outcome.outcome}, {outcome.r_multiple:+.2f}R / "
+                f"${outcome.estimated_pnl:+.2f}"
+            )
 
     if stopped_reasons:
         lines.extend(["", "No-trade / stopped reasons:"])
@@ -582,12 +601,26 @@ def _plain_result_line(plan, price: float, r_multiple: float) -> str:
     )
 
 
+def build_trade_outcome(
+    trade: WatchedTrade,
+    outcome: str,
+    r_multiple: float,
+) -> TradeOutcome:
+    return TradeOutcome(
+        symbol=trade.symbol,
+        strategy=trade.strategy,
+        outcome=outcome,
+        r_multiple=r_multiple,
+        estimated_pnl=_estimated_trade_pnl(trade.plan, r_multiple),
+    )
+
+
 def evaluate_watched_trade(
     trade: WatchedTrade,
     session_df: pd.DataFrame,
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool, TradeOutcome | None]:
     if trade.closed or session_df.empty:
-        return None, False
+        return None, False, None
     if "timestamp_ny" not in session_df.columns:
         raise ValueError("session_df must include timestamp_ny.")
 
@@ -596,7 +629,7 @@ def evaluate_watched_trade(
     if trade.signal_time is not None:
         df = df[df["timestamp_ny"] >= pd.Timestamp(trade.signal_time)]
     if df.empty:
-        return None, False
+        return None, False, None
 
     for _, candle in df.iterrows():
         high = float(candle["high"])
@@ -623,6 +656,7 @@ def evaluate_watched_trade(
                 f"Note: stop and target were both touched in the same 1-minute candle, "
                 f"so we use the conservative stop-first rule.",
                 True,
+                build_trade_outcome(trade, "stop assumed first", -1.0),
             )
 
         if stop_hit:
@@ -636,6 +670,7 @@ def evaluate_watched_trade(
                 f"Estimated P/L: ${_estimated_trade_pnl(plan, -1.0):+.2f}\n"
                 f"{_plain_result_line(plan, plan.stop_price, -1.0)}",
                 True,
+                build_trade_outcome(trade, "stop hit", -1.0),
             )
 
         if target_hit:
@@ -649,6 +684,7 @@ def evaluate_watched_trade(
                 f"Estimated P/L: ${_estimated_trade_pnl(plan, 2.0):+.2f}\n"
                 f"{_plain_result_line(plan, plan.target_price, 2.0)}",
                 True,
+                build_trade_outcome(trade, "target hit", 2.0),
             )
 
         if one_r_hit and not trade.one_r_sent:
@@ -666,24 +702,25 @@ def evaluate_watched_trade(
                 f"Target remains: {plan.target_price:.2f}\n"
                 f"Stop remains: {plan.stop_price:.2f}",
                 False,
+                None,
             )
 
-    return None, False
+    return None, False, None
 
 
 def format_watched_trade_cutoff_result(
     trade: WatchedTrade,
     session_df: pd.DataFrame,
     cutoff: str,
-) -> str | None:
+) -> tuple[str | None, TradeOutcome | None]:
     if trade.closed or session_df.empty:
-        return None
+        return None, None
     plan = trade.plan
     df = session_df.sort_values("timestamp_ny")
     if trade.signal_time is not None:
         df = df[df["timestamp_ny"] >= pd.Timestamp(trade.signal_time)]
     if df.empty:
-        return None
+        return None, None
 
     last = df.iloc[-1]
     close = float(last["close"])
@@ -698,7 +735,7 @@ def format_watched_trade_cutoff_result(
         f"Estimated P/L if entered: ${_estimated_trade_pnl(plan, r_multiple):+.2f}\n"
         f"{_plain_result_line(plan, close, r_multiple)}\n"
         f"Note: target and stop were not hit before the watch ended."
-    )
+    ), build_trade_outcome(trade, "cutoff close", r_multiple)
 
 
 def load_live_session(symbol: str, trading_date) -> pd.DataFrame:
@@ -1061,6 +1098,7 @@ def main():
 
     stopped_reasons: dict[str, list[tuple[str, str]]] = {}
     watched_trades: list[WatchedTrade] = []
+    trade_outcomes: list[TradeOutcome] = []
     while (
         datetime.now(tz=NY_TZ).time() <= cutoff
         and (active_lanes or any(not trade.closed for trade in watched_trades))
@@ -1130,12 +1168,14 @@ def main():
                 tracking_df,
                 trading_date,
             )
-            update_message, _terminal = evaluate_watched_trade(
+            update_message, _terminal, trade_outcome = evaluate_watched_trade(
                 trade,
                 tracking_df,
             )
             if update_message is not None:
                 send_mobile_alert(symbol_args, update_message)
+            if trade_outcome is not None:
+                trade_outcomes.append(trade_outcome)
 
         sleep_time.sleep(args.poll_seconds)
 
@@ -1151,13 +1191,15 @@ def main():
             tracking_df,
             trading_date,
         )
-        result_message = format_watched_trade_cutoff_result(
+        result_message, trade_outcome = format_watched_trade_cutoff_result(
             trade,
             tracking_df,
             args.cutoff,
         )
         if result_message is not None:
             send_mobile_alert(symbol_args, result_message)
+        if trade_outcome is not None:
+            trade_outcomes.append(trade_outcome)
 
     if args.alert_status:
         if active_lanes:
@@ -1169,6 +1211,7 @@ def main():
                 stopped_reasons=stopped_reasons,
                 active_lanes=active_lanes,
                 args=args,
+                trade_outcomes=trade_outcomes,
             ),
         )
     elif active_lanes:
