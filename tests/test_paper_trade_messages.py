@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pandas as pd
 import pytest
 
+from scripts.forexfactory_news_risk import EconomicEvent
 from scripts.paper_trade import (
     HTF_BREAKOUT_STRATEGY_VERSION,
     ORB_BODY_STRATEGY_VERSION,
@@ -100,6 +101,43 @@ def test_format_approved_message_includes_relative_strength_quality():
     assert "Signal quality: A" in message
     assert "Relative strength: aligned vs QQQ" in message
     assert "NVDA +1.20%" in message
+
+
+def test_format_approved_message_includes_macro_and_late_timing_context():
+    message = format_approved_message(
+        args=FakeArgs(symbol="GOOGL", cutoff="10:15"),
+        decision=FakeDecision(
+            plan=FakePlan(symbol="GOOGL"),
+            signal={
+                "breakout_timestamp": "2026-10-02 10:01:00-04:00",
+                "retest_timestamp": "2026-10-02 10:02:00-04:00",
+                "confirmation_timestamp": "2026-10-02 10:02:00-04:00",
+            },
+        ),
+        dry_run=True,
+        macro_risk_context={
+            "status": "high",
+            "start": "08:00",
+            "end": "10:30",
+            "events": [
+                EconomicEvent(
+                    title="Non-Farm Employment Change",
+                    country="USD",
+                    event_time=pd.Timestamp("2026-10-02 08:30", tz="America/New_York"),
+                    impact="High",
+                ),
+                EconomicEvent(
+                    title="Unemployment Rate",
+                    country="USD",
+                    event_time=pd.Timestamp("2026-10-02 08:30", tz="America/New_York"),
+                    impact="High",
+                ),
+            ],
+        },
+    )
+
+    assert "Macro risk: HIGH (08:30 NY Non-Farm Employment Change, +1 more)" in message
+    assert "Timing warning: signal fired 13 min before cutoff" in message
 
 
 def test_format_watch_started_message_groups_strategy_lanes():

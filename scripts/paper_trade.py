@@ -40,6 +40,13 @@ from paper_trading.vwap_pullback import (
     VWAPPullbackConfig,
     build_vwap_pullback_paper_trade_decision,
 )
+from scripts.forexfactory_news_risk import (
+    DEFAULT_CALENDAR_URL as FOREXFACTORY_CALENDAR_URL,
+    fetch_text as fetch_forexfactory_text,
+    filter_news_risk_events,
+    parse_calendar_events,
+    parse_ny_clock as parse_news_ny_clock,
+)
 from strategy.market_calendar import (
     SessionQuality,
     compare_session_minutes,
@@ -113,6 +120,8 @@ def parse_args():
     parser.add_argument("--discord", action="store_true", help="Send Discord notifications using DISCORD_WEBHOOK_URL.")
     parser.add_argument("--email", action="store_true", help="Send email notifications using SMTP_* secrets.")
     parser.add_argument("--alert-status", action="store_true", help="Send start and no-signal completion alerts.")
+    parser.add_argument("--macro-news-start", default="08:00", help="New York HH:MM macro risk window start.")
+    parser.add_argument("--macro-news-end", default="10:30", help="New York HH:MM macro risk window end.")
     return parser.parse_args()
 
 
@@ -441,7 +450,113 @@ def format_relative_strength_context(signal: dict) -> str:
     )
 
 
-def format_approved_message(args, decision, dry_run: bool) -> str:
+def build_macro_risk_context(
+    trading_date,
+    start: str = "08:00",
+    end: str = "10:30",
+) -> dict:
+    try:
+        start_time = parse_news_ny_clock(start)
+        end_time = parse_news_ny_clock(end)
+        text = fetch_forexfactory_text(FOREXFACTORY_CALENDAR_URL)
+        events = parse_calendar_events(text)
+        risk_events = filter_news_risk_events(
+            events=events,
+            trading_date=trading_date,
+            countries={"USD"},
+            impacts={"HIGH"},
+            start_time=start_time,
+            end_time=end_time,
+        )
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "start": start,
+            "end": end,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "events": [],
+        }
+
+    return {
+        "status": "high" if risk_events else "clear",
+        "start": start,
+        "end": end,
+        "events": risk_events,
+    }
+
+
+def format_macro_risk_context(macro_risk_context: dict | None) -> str:
+    if not macro_risk_context:
+        return "- Macro risk: unavailable"
+
+    status = macro_risk_context.get("status")
+    start = macro_risk_context.get("start", "08:00")
+    end = macro_risk_context.get("end", "10:30")
+    if status == "clear":
+        return f"- Macro risk: clear in {start}-{end} NY window"
+    if status == "high":
+        events = macro_risk_context.get("events", [])
+        if not events:
+            return f"- Macro risk: HIGH in {start}-{end} NY window"
+        first = events[0]
+        first_label = f"{first.event_time.strftime('%H:%M')} NY {first.title}"
+        more = f", +{len(events) - 1} more" if len(events) > 1 else ""
+        return f"- Macro risk: HIGH ({first_label}{more})"
+    reason = macro_risk_context.get("reason", "not available")
+    return f"- Macro risk: unavailable ({reason})"
+
+
+def signal_reference_timestamp(signal: dict):
+    return (
+        signal.get("entry_timestamp")
+        or signal.get("confirmation_timestamp")
+        or signal.get("retest_timestamp")
+        or signal.get("breakout_timestamp")
+        or signal.get("pullback_timestamp")
+    )
+
+
+def minutes_until_cutoff(signal: dict, cutoff: str) -> int | None:
+    timestamp = signal_reference_timestamp(signal)
+    if timestamp is None:
+        return None
+    try:
+        signal_time = pd.Timestamp(timestamp)
+    except (TypeError, ValueError):
+        return None
+    if signal_time.tzinfo is None:
+        signal_time = signal_time.tz_localize(NY_TZ)
+    signal_time = signal_time.tz_convert(NY_TZ)
+    cutoff_dt = pd.Timestamp(
+        datetime.combine(
+            signal_time.date(),
+            parse_ny_clock(cutoff),
+            tzinfo=NY_TZ,
+        )
+    )
+    return int((cutoff_dt - signal_time).total_seconds() // 60)
+
+
+def format_timing_context(signal: dict, cutoff: str) -> str:
+    minutes_left = minutes_until_cutoff(signal, cutoff)
+    if minutes_left is None:
+        return "- Timing context: unavailable"
+    if minutes_left < 0:
+        return f"- Timing warning: signal is after cutoff by {abs(minutes_left)} min."
+    if minutes_left <= 15:
+        return (
+            f"- Timing warning: signal fired {minutes_left} min before cutoff; "
+            "less time for target."
+        )
+    return f"- Timing context: {minutes_left} min before cutoff"
+
+
+def format_approved_message(
+    args,
+    decision,
+    dry_run: bool,
+    macro_risk_context: dict | None = None,
+) -> str:
     plan = decision.plan
     signal = decision.signal or {}
     mode = "DRY RUN" if dry_run else "PAPER SUBMIT"
@@ -481,7 +596,9 @@ def format_approved_message(args, decision, dry_run: bool) -> str:
         f"Suggested action: {action}\n\n"
         f"Signal quality: {quality}\n"
         f"- {quality_reason}\n"
-        f"{format_relative_strength_context(signal)}\n\n"
+        f"{format_relative_strength_context(signal)}\n"
+        f"{format_macro_risk_context(macro_risk_context)}\n"
+        f"{format_timing_context(signal, args.cutoff)}\n\n"
         f"Manual order details:\n"
         f"- Shares: {plan.quantity}\n"
         f"- Entry reference: {plan.entry_price_reference:.2f}\n"
@@ -1051,6 +1168,11 @@ def main():
         max_daily_loss_fraction=args.max_daily_loss_fraction,
         allow_short_selling=not args.disable_shorts,
     )
+    macro_risk_context = build_macro_risk_context(
+        trading_date=trading_date,
+        start=args.macro_news_start,
+        end=args.macro_news_end,
+    )
 
     if not args.watch:
         reason, decision = run_once(
@@ -1068,7 +1190,12 @@ def main():
         if args.telegram and reason == "APPROVED" and decision is not None:
             send_mobile_alert(
                 args,
-                format_approved_message(args, decision, dry_run),
+                format_approved_message(
+                    args,
+                    decision,
+                    dry_run,
+                    macro_risk_context=macro_risk_context,
+                ),
             )
         return
 
@@ -1122,7 +1249,12 @@ def main():
                 if decision is not None:
                     send_mobile_alert(
                         symbol_args,
-                        format_approved_message(symbol_args, decision, dry_run),
+                        format_approved_message(
+                            symbol_args,
+                            decision,
+                            dry_run,
+                            macro_risk_context=macro_risk_context,
+                        ),
                         components=build_discord_approval_components(
                             symbol_args,
                             decision,
