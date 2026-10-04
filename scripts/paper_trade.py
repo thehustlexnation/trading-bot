@@ -40,6 +40,11 @@ from paper_trading.vwap_pullback import (
     VWAPPullbackConfig,
     build_vwap_pullback_paper_trade_decision,
 )
+from paper_trading.vwap_ema_cross import (
+    STRATEGY_VERSION as VWAP_EMA_CROSS_STRATEGY_VERSION,
+    VWAPEMACrossConfig,
+    build_vwap_ema9_cross_paper_trade_decision,
+)
 from scripts.forexfactory_news_risk import (
     DEFAULT_CALENDAR_URL as FOREXFACTORY_CALENDAR_URL,
     fetch_text as fetch_forexfactory_text,
@@ -99,7 +104,8 @@ def parse_args():
         default=(
             f"{ORB_BODY_STRATEGY_VERSION},"
             f"{HTF_BREAKOUT_STRATEGY_VERSION},"
-            f"{VWAP_PULLBACK_STRATEGY_VERSION}"
+            f"{VWAP_PULLBACK_STRATEGY_VERSION},"
+            f"{VWAP_EMA_CROSS_STRATEGY_VERSION}"
         ),
         help="Comma-separated strategy lanes to scan.",
     )
@@ -160,6 +166,7 @@ def parse_strategies(strategies: str) -> list[str]:
         ORB_BODY_STRATEGY_VERSION,
         HTF_BREAKOUT_STRATEGY_VERSION,
         VWAP_PULLBACK_STRATEGY_VERSION,
+        VWAP_EMA_CROSS_STRATEGY_VERSION,
     }
     unknown = sorted(set(parsed) - allowed)
     if unknown:
@@ -303,6 +310,8 @@ def format_watch_started_message(
         lines.append(f"- ORB retest: {_format_symbol_list(symbols)}")
     if VWAP_PULLBACK_STRATEGY_VERSION in strategies:
         lines.append(f"- VWAP pullback: {_format_symbol_list(symbols)}")
+    if VWAP_EMA_CROSS_STRATEGY_VERSION in strategies:
+        lines.append(f"- VWAP + EMA9 cross: {_format_symbol_list(symbols)}")
     if HTF_BREAKOUT_STRATEGY_VERSION in strategies:
         lines.append(f"- HTF breakout: {_format_symbol_list(htf_symbols)}")
     lines.extend(
@@ -536,6 +545,20 @@ def format_approved_message(
             f"- Confirmation: {confirmation_time}\n"
             f"- VWAP reference: {vwap_reference}"
         )
+    elif plan.strategy_version == VWAP_EMA_CROSS_STRATEGY_VERSION:
+        vwap_reference = signal.get("vwap", "n/a")
+        ema_reference = signal.get("ema9", "n/a")
+        if isinstance(vwap_reference, float):
+            vwap_reference = f"{vwap_reference:.2f}"
+        if isinstance(ema_reference, float):
+            ema_reference = f"{ema_reference:.2f}"
+        what_happened = "3-minute VWAP and EMA9 cross confirmation detected."
+        timing_lines = (
+            f"- Cross: {signal.get('cross_timestamp', 'n/a')}\n"
+            f"- Confirmation: {confirmation_time}\n"
+            f"- VWAP reference: {vwap_reference}\n"
+            f"- EMA9 reference: {ema_reference}"
+        )
     elif plan.strategy_version == HTF_BREAKOUT_STRATEGY_VERSION:
         what_happened = "Higher-timeframe resistance breakout, retest, and confirmation detected."
         timing_lines = (
@@ -636,6 +659,8 @@ def _strategy_label(strategy: str) -> str:
         return "HTF breakout"
     if strategy == VWAP_PULLBACK_STRATEGY_VERSION:
         return "VWAP pullback"
+    if strategy == VWAP_EMA_CROSS_STRATEGY_VERSION:
+        return "VWAP + EMA9 cross"
     return strategy
 
 
@@ -646,6 +671,8 @@ def _strategy_short_label(strategy: str) -> str:
         return "HTF"
     if strategy == VWAP_PULLBACK_STRATEGY_VERSION:
         return "VWAP"
+    if strategy == VWAP_EMA_CROSS_STRATEGY_VERSION:
+        return "XEMA"
     return strategy
 
 
@@ -656,6 +683,7 @@ def _tracking_start_time(decision) -> object:
         or signal.get("confirmation_timestamp")
         or signal.get("retest_timestamp")
         or signal.get("breakout_timestamp")
+        or signal.get("cross_timestamp")
     )
 
 
@@ -996,6 +1024,15 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
             vwap_config=VWAPPullbackConfig(),
             realized_daily_pnl=args.realized_daily_pnl,
         )
+    elif strategy_version == VWAP_EMA_CROSS_STRATEGY_VERSION:
+        decision = build_vwap_ema9_cross_paper_trade_decision(
+            session_df=session_df,
+            symbol=args.symbol,
+            account_equity=account_equity,
+            paper_config=config,
+            cross_config=VWAPEMACrossConfig(),
+            realized_daily_pnl=args.realized_daily_pnl,
+        )
     else:
         raise ValueError(f"Unknown strategy lane: {strategy_version}")
 
@@ -1233,6 +1270,7 @@ def main():
                 "NO_VALID_SIGNAL",
                 "INSUFFICIENT_BARS",
                 "NO_VWAP_PULLBACK_CONFIRMATION",
+                "NO_VWAP_EMA9_CROSS_CONFIRMATION",
                 "NO_ENTRY_CANDLE",
             }
             if reason not in non_terminal_reasons:

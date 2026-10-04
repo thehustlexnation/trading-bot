@@ -7,6 +7,7 @@ from scripts.forexfactory_news_risk import EconomicEvent
 from scripts.paper_trade import (
     HTF_BREAKOUT_STRATEGY_VERSION,
     ORB_BODY_STRATEGY_VERSION,
+    VWAP_EMA_CROSS_STRATEGY_VERSION,
     VWAP_PULLBACK_STRATEGY_VERSION,
     TradeOutcome,
     WatchedTrade,
@@ -395,11 +396,12 @@ def test_parse_symbols_rejects_empty_list():
 
 def test_parse_strategies_accepts_known_lanes():
     assert parse_strategies(
-        "ORB_RETEST_RECLAIM_BODY_2R, htf_breakout_retest_2r, vwap_trend_pullback_2r"
+        "ORB_RETEST_RECLAIM_BODY_2R, htf_breakout_retest_2r, vwap_trend_pullback_2r, vwap_ema9_cross_2r"
     ) == [
         "ORB_RETEST_RECLAIM_BODY_2R",
         "HTF_BREAKOUT_RETEST_2R",
         "VWAP_TREND_PULLBACK_2R",
+        "VWAP_EMA9_CROSS_2R",
     ]
 
 
