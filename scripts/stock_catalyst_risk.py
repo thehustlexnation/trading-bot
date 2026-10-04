@@ -37,6 +37,19 @@ class CompanyNewsItem:
     url: str = ""
 
 
+def _group_by_symbol(items) -> dict[str, list]:
+    grouped: dict[str, list] = {}
+    for item in items:
+        grouped.setdefault(item.symbol.upper(), []).append(item)
+    return grouped
+
+
+def _shorten(text: str, max_length: int = 96) -> str:
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
+
+
 def parse_symbols(value: str) -> list[str]:
     symbols = [item.strip().upper() for item in value.split(",") if item.strip()]
     return list(dict.fromkeys(symbols))
@@ -173,28 +186,62 @@ def format_stock_catalyst_message(
         return "\n".join(lines)
 
     if earnings:
-        lines.append("Earnings/event risk:")
-        for event in earnings[:12]:
-            detail = []
-            if event.hour:
-                detail.append(event.hour)
-            if event.eps_estimate:
-                detail.append(f"EPS est {event.eps_estimate}")
-            if event.revenue_estimate:
-                detail.append(f"Revenue est {event.revenue_estimate}")
-            detail_text = f" ({', '.join(detail)})" if detail else ""
-            lines.append(f"- {event.symbol}: earnings {event.report_date}{detail_text}")
-        if len(earnings) > 12:
-            lines.append(f"- +{len(earnings) - 12} more")
+        lines.append("Earnings / event risk:")
+        earnings_by_symbol = _group_by_symbol(earnings)
+        for symbol in symbols:
+            symbol_events = earnings_by_symbol.get(symbol, [])
+            if not symbol_events:
+                continue
+            event_texts = []
+            for event in symbol_events[:2]:
+                detail = []
+                if event.hour:
+                    detail.append(event.hour)
+                if event.eps_estimate:
+                    detail.append(f"EPS {event.eps_estimate}")
+                if event.revenue_estimate:
+                    detail.append(f"Rev {event.revenue_estimate}")
+                detail_text = f" ({', '.join(detail)})" if detail else ""
+                event_texts.append(f"{event.report_date}{detail_text}")
+            hidden_count = len(symbol_events) - len(event_texts)
+            hidden_text = f"; +{hidden_count} more" if hidden_count > 0 else ""
+            lines.append(f"- {symbol}: {'; '.join(event_texts)}{hidden_text}")
         lines.append("")
 
     if news:
-        lines.append("Recent company headlines:")
-        for item in news[:12]:
-            source = f" [{item.source}]" if item.source else ""
-            lines.append(f"- {item.symbol}{source}: {item.headline}")
-        if len(news) > 12:
-            lines.append(f"- +{len(news) - 12} more")
+        news_by_symbol = _group_by_symbol(news)
+        symbols_with_news = [
+            symbol
+            for symbol in symbols
+            if news_by_symbol.get(symbol)
+        ]
+        lines.extend(
+            [
+                "Recent company headlines:",
+                f"Symbols with headlines: {len(symbols_with_news)}/{len(symbols)}",
+                "",
+                "```",
+                "Symbol | Count | Latest headlines",
+                "-------|-------|-----------------",
+            ]
+        )
+        for symbol in symbols:
+            symbol_news = news_by_symbol.get(symbol, [])
+            if not symbol_news:
+                lines.append(f"{symbol:<6} | 0     | none found")
+                continue
+
+            shown = []
+            for item in symbol_news[:2]:
+                source = f"{item.source}: " if item.source else ""
+                shown.append(_shorten(f"{source}{item.headline}"))
+            hidden_count = len(symbol_news) - len(shown)
+            hidden_text = f" (+{hidden_count} more)" if hidden_count > 0 else ""
+            lines.append(
+                f"{symbol:<6} | {len(symbol_news):<5} | "
+                f"{' / '.join(shown)}{hidden_text}"
+            )
+        lines.append("```")
         lines.append("")
 
     lines.extend(

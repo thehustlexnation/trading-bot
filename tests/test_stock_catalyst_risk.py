@@ -95,7 +95,31 @@ def test_format_stock_catalyst_message_with_earnings_and_news():
         api_key_available=True,
     )
 
-    assert "Earnings/event risk" in message
-    assert "NVDA: earnings 2026-10-06" in message
+    assert "Earnings / event risk" in message
+    assert "NVDA: 2026-10-06" in message
     assert "Recent company headlines" in message
-    assert "NVDA [Reuters]: Nvidia announces new AI chip" in message
+    assert "Symbol | Count | Latest headlines" in message
+    assert "NVDA" in message
+    assert "Reuters: Nvidia announces new AI chip" in message
+
+
+def test_format_stock_catalyst_message_groups_headlines_by_symbol():
+    message = format_stock_catalyst_message(
+        symbols=["AAPL", "NVDA", "QQQ"],
+        start_date=date(2026, 10, 1),
+        end_date=date(2026, 10, 9),
+        earnings=[],
+        news=[
+            CompanyNewsItem(symbol="AAPL", headline="Apple headline one", source="Yahoo"),
+            CompanyNewsItem(symbol="AAPL", headline="Apple headline two", source="Reuters"),
+            CompanyNewsItem(symbol="AAPL", headline="Apple headline three", source="CNBC"),
+            CompanyNewsItem(symbol="NVDA", headline="Nvidia headline", source="Yahoo"),
+        ],
+        api_key_available=True,
+    )
+
+    assert "Symbols with headlines: 2/3" in message
+    assert "AAPL" in message
+    assert "Apple headline one" in message
+    assert "(+1 more)" in message
+    assert "QQQ    | 0" in message
