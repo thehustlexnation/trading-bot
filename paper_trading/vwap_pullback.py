@@ -19,6 +19,7 @@ class VWAPPullbackConfig:
     vwap_tolerance_percent: float = 0.0015
     stop_buffer_percent: float = 0.001
     target_r: float = 2.0
+    require_follow_through: bool = True
 
 
 @dataclass(frozen=True)
@@ -114,11 +115,39 @@ def find_vwap_trend_pullback_signal(
     if pullback_index is None or direction is None:
         return None, "NO_VWAP_PULLBACK_CONFIRMATION"
 
-    if pullback_index + 1 >= len(df):
+    pullback = df.iloc[pullback_index]
+    confirmation_index = pullback_index
+    if config.require_follow_through:
+        if pullback_index + 1 >= len(df):
+            return None, "NO_FOLLOW_THROUGH_CANDLE"
+
+        follow_through = df.iloc[pullback_index + 1]
+        follow_open = float(follow_through["open"])
+        follow_close = float(follow_through["close"])
+        follow_vwap = float(follow_through["session_vwap"])
+        pullback_close = float(pullback["close"])
+
+        if direction == "LONG":
+            has_follow_through = (
+                follow_close > follow_vwap
+                and follow_close > follow_open
+                and follow_close > pullback_close
+            )
+        else:
+            has_follow_through = (
+                follow_close < follow_vwap
+                and follow_close < follow_open
+                and follow_close < pullback_close
+            )
+        if not has_follow_through:
+            return None, "NO_FOLLOW_THROUGH_CONFIRMATION"
+        confirmation_index = pullback_index + 1
+
+    if confirmation_index + 1 >= len(df):
         return None, "NO_ENTRY_CANDLE"
 
-    pullback = df.iloc[pullback_index]
-    entry = df.iloc[pullback_index + 1]
+    confirmation = df.iloc[confirmation_index]
+    entry = df.iloc[confirmation_index + 1]
     entry_price = float(entry["open"])
     vwap = float(pullback["session_vwap"])
 
@@ -127,7 +156,7 @@ def find_vwap_trend_pullback_signal(
         "direction": direction,
         "vwap": vwap,
         "pullback_timestamp": pullback["timestamp_ny"],
-        "confirmation_timestamp": pullback["timestamp_ny"],
+        "confirmation_timestamp": confirmation["timestamp_ny"],
         "entry_timestamp": entry["timestamp_ny"],
         "entry_price": entry_price,
         "pullback_low": float(pullback["low"]),

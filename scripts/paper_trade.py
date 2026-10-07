@@ -1238,6 +1238,14 @@ def main():
             )
 
             if reason == "APPROVED":
+                quality = "B"
+                if decision is not None and decision.signal is not None:
+                    quality, _ = signal_quality_from_context(decision.signal)
+                if quality == "C":
+                    stopped_reasons.setdefault("LOW_QUALITY_C", []).append((symbol, strategy))
+                    active_lanes.remove((symbol, strategy))
+                    continue
+
                 notify(
                     "Paper Trading Signal",
                     f"{symbol} approved in {'dry-run' if dry_run else 'submit'} mode.",
@@ -1270,6 +1278,8 @@ def main():
                 "NO_VALID_SIGNAL",
                 "INSUFFICIENT_BARS",
                 "NO_VWAP_PULLBACK_CONFIRMATION",
+                "NO_FOLLOW_THROUGH_CANDLE",
+                "NO_FOLLOW_THROUGH_CONFIRMATION",
                 "NO_VWAP_EMA9_CROSS_CONFIRMATION",
                 "NO_ENTRY_CANDLE",
             }

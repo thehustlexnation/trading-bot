@@ -51,6 +51,7 @@ def test_find_vwap_trend_pullback_long_signal():
             (101.8, 102.3, 101.5, 102.0),
             (101.4, 101.9, 100.8, 101.7),
             (101.8, 102.5, 101.7, 102.3),
+            (102.4, 103.0, 102.3, 102.8),
         ]
     )
 
@@ -65,7 +66,7 @@ def test_find_vwap_trend_pullback_long_signal():
 
     assert reason == "APPROVED"
     assert signal["direction"] == "LONG"
-    assert signal["entry_price"] == 101.8
+    assert signal["entry_price"] == 102.4
 
 
 def test_find_vwap_trend_pullback_short_signal():
@@ -78,6 +79,7 @@ def test_find_vwap_trend_pullback_short_signal():
             (98.1, 98.3, 97.5, 97.8),
             (98.4, 99.0, 97.9, 98.0),
             (97.9, 98.0, 97.0, 97.2),
+            (97.1, 97.2, 96.6, 96.8),
         ]
     )
 
@@ -92,7 +94,34 @@ def test_find_vwap_trend_pullback_short_signal():
 
     assert reason == "APPROVED"
     assert signal["direction"] == "SHORT"
-    assert signal["entry_price"] == 97.9
+    assert signal["entry_price"] == 97.1
+
+
+def test_find_vwap_trend_pullback_rejects_without_follow_through():
+    df = _session(
+        [
+            (100.0, 100.2, 99.3, 99.5),
+            (99.5, 99.7, 98.8, 99.0),
+            (99.0, 99.2, 98.2, 98.5),
+            (98.5, 98.7, 97.8, 98.1),
+            (98.1, 98.3, 97.5, 97.8),
+            (98.4, 99.0, 97.9, 98.0),
+            (97.9, 98.3, 97.7, 98.2),
+            (98.1, 98.4, 98.0, 98.3),
+        ]
+    )
+
+    signal, reason = find_vwap_trend_pullback_signal(
+        df,
+        VWAPPullbackConfig(
+            earliest_signal_minute="09:40",
+            trend_lookback_bars=5,
+            min_bars_on_trend_side=3,
+        ),
+    )
+
+    assert signal is None
+    assert reason == "NO_FOLLOW_THROUGH_CONFIRMATION"
 
 
 def test_build_vwap_pullback_paper_trade_decision():
@@ -105,6 +134,7 @@ def test_build_vwap_pullback_paper_trade_decision():
             (101.8, 102.3, 101.5, 102.0),
             (101.4, 101.9, 100.8, 101.7),
             (101.8, 102.5, 101.7, 102.3),
+            (102.4, 103.0, 102.3, 102.8),
         ]
     )
 
