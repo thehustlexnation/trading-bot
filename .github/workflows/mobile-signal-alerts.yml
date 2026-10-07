@@ -27,6 +27,10 @@ on:
         description: New York end time for economic news risk check
         required: false
         default: "10:30"
+      submit_paper:
+        description: Type true to auto-submit qualifying Alpaca paper trades. Anything else is alerts only.
+        required: false
+        default: "false"
 
 concurrency:
   group: mobile-signal-alerts-${{ github.ref }}
@@ -93,6 +97,10 @@ jobs:
           NEWS_END="${{ github.event.inputs.news_end || '10:30' }}"
           STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R' }}"
           HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
+          SUBMIT_ARGS=""
+          if [ "${{ github.event.inputs.submit_paper || 'false' }}" = "true" ]; then
+            SUBMIT_ARGS="--submit --auto-submit-watch"
+          fi
           python scripts/paper_trade.py \
             --symbols "$SYMBOLS" \
             --htf-symbols "$HTF_SYMBOLS" \
@@ -105,4 +113,5 @@ jobs:
             --cutoff "$CUTOFF" \
             --macro-news-start "$NEWS_START" \
             --macro-news-end "$NEWS_END" \
-            --equity 10000
+            --equity 10000 \
+            $SUBMIT_ARGS

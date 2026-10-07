@@ -112,6 +112,11 @@ def parse_args():
     parser.add_argument("--date", default=None, help="YYYY-MM-DD, defaults to today in New York.")
     parser.add_argument("--source", choices=["db", "live"], default="db")
     parser.add_argument("--submit", action="store_true", help="Submit to Alpaca paper account.")
+    parser.add_argument(
+        "--auto-submit-watch",
+        action="store_true",
+        help="Allow watch mode to submit multiple Alpaca paper orders. Requires --submit.",
+    )
     parser.add_argument("--equity", type=float, default=None, help="Override account equity.")
     parser.add_argument("--realized-daily-pnl", type=float, default=0.0)
     parser.add_argument("--risk-fraction", type=float, default=PaperTradingConfig.risk_fraction)
@@ -1117,7 +1122,11 @@ def main():
         else None
     )
 
-    if args.submit and (len(symbols) > 1 or len(strategies) > 1):
+    if (
+        args.submit
+        and (len(symbols) > 1 or len(strategies) > 1)
+        and not (args.watch and args.auto_submit_watch)
+    ):
         print("REJECTED: SUBMIT_REQUIRES_SINGLE_SYMBOL_AND_STRATEGY")
         return
 
