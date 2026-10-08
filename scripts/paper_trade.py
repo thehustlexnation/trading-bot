@@ -126,6 +126,11 @@ def parse_args():
     parser.add_argument("--watch", action="store_true", help="Keep polling until the cutoff time.")
     parser.add_argument("--poll-seconds", type=int, default=30)
     parser.add_argument("--cutoff", default="10:15", help="New York HH:MM stop time for watch mode.")
+    parser.add_argument(
+        "--last-entry",
+        default="10:00",
+        help="New York HH:MM latest new signal entry time in watch mode.",
+    )
     parser.add_argument("--notify", action="store_true", help="Send macOS notifications for decisions.")
     parser.add_argument("--telegram", action="store_true", help="Send Telegram notifications using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
     parser.add_argument("--slack", action="store_true", help="Send Slack notifications using SLACK_WEBHOOK_URL.")
@@ -509,6 +514,27 @@ def minutes_until_cutoff(signal: dict, cutoff: str) -> int | None:
         )
     )
     return int((cutoff_dt - signal_time).total_seconds() // 60)
+
+
+def is_signal_after_last_entry(signal: dict, last_entry: str) -> bool:
+    timestamp = signal_reference_timestamp(signal)
+    if timestamp is None:
+        return False
+    try:
+        signal_time = pd.Timestamp(timestamp)
+    except (TypeError, ValueError):
+        return False
+    if signal_time.tzinfo is None:
+        signal_time = signal_time.tz_localize(NY_TZ)
+    signal_time = signal_time.tz_convert(NY_TZ)
+    last_entry_dt = pd.Timestamp(
+        datetime.combine(
+            signal_time.date(),
+            parse_ny_clock(last_entry),
+            tzinfo=NY_TZ,
+        )
+    )
+    return signal_time > last_entry_dt
 
 
 def format_timing_context(signal: dict, cutoff: str) -> str:
@@ -1232,11 +1258,17 @@ def main():
     stopped_reasons: dict[str, list[tuple[str, str]]] = {}
     watched_trades: list[WatchedTrade] = []
     trade_outcomes: list[TradeOutcome] = []
+    claimed_symbols: set[str] = set()
     while (
         datetime.now(tz=NY_TZ).time() <= cutoff
         and (active_lanes or any(not trade.closed for trade in watched_trades))
     ):
         for symbol, strategy in list(active_lanes):
+            if symbol in claimed_symbols:
+                stopped_reasons.setdefault("SYMBOL_ALREADY_HAS_ALERT", []).append((symbol, strategy))
+                active_lanes.remove((symbol, strategy))
+                continue
+
             symbol_args = args_for_symbol(args, symbol)
             reason, decision = run_once(
                 symbol_args,
@@ -1252,6 +1284,14 @@ def main():
                     quality, _ = signal_quality_from_context(decision.signal)
                 if quality == "C":
                     stopped_reasons.setdefault("LOW_QUALITY_C", []).append((symbol, strategy))
+                    active_lanes.remove((symbol, strategy))
+                    continue
+                if (
+                    decision is not None
+                    and decision.signal is not None
+                    and is_signal_after_last_entry(decision.signal, args.last_entry)
+                ):
+                    stopped_reasons.setdefault("LATE_SIGNAL_AFTER_LAST_ENTRY", []).append((symbol, strategy))
                     active_lanes.remove((symbol, strategy))
                     continue
 
@@ -1279,6 +1319,7 @@ def main():
                         )
                     )
                 approved_lanes.add((symbol, strategy))
+                claimed_symbols.add(symbol)
                 active_lanes.remove((symbol, strategy))
                 continue
 

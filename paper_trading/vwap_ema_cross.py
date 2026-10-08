@@ -19,6 +19,7 @@ class VWAPEMACrossConfig:
     stop_lookback_bars: int = 3
     stop_buffer_percent: float = 0.001
     target_r: float = 2.0
+    max_entry_extension_percent: float = 0.004
 
 
 @dataclass(frozen=True)
@@ -136,16 +137,28 @@ def find_vwap_ema9_cross_signal(
 
         entry = bars.iloc[index + 1]
         stop_window = bars.iloc[max(0, index - config.stop_lookback_bars + 1): index + 1]
+        entry_price = float(entry["open"])
+        if direction == "LONG":
+            reference_price = max(current_ema, current_vwap)
+            extension = (entry_price - reference_price) / reference_price
+        else:
+            reference_price = min(current_ema, current_vwap)
+            extension = (reference_price - entry_price) / reference_price
+
+        if extension > config.max_entry_extension_percent:
+            return None, "VWAP_EMA9_ENTRY_TOO_EXTENDED"
+
         return {
             "strategy_version": STRATEGY_VERSION,
             "direction": direction,
             "timeframe": config.timeframe,
             "vwap": current_vwap,
             "ema9": current_ema,
+            "entry_extension_percent": extension,
             "cross_timestamp": candle["timestamp_ny"],
             "confirmation_timestamp": candle["timestamp_ny"],
             "entry_timestamp": entry["timestamp_ny"],
-            "entry_price": float(entry["open"]),
+            "entry_price": entry_price,
             "swing_low": float(stop_window["low"].astype(float).min()),
             "swing_high": float(stop_window["high"].astype(float).max()),
         }, "APPROVED"

@@ -20,6 +20,7 @@ from scripts.paper_trade import (
     format_approved_message,
     format_watch_recap_message,
     format_watch_started_message,
+    is_signal_after_last_entry,
     parse_strategies,
     parse_symbols,
 )
@@ -139,6 +140,31 @@ def test_format_approved_message_includes_macro_and_late_timing_context():
 
     assert "Macro risk: HIGH (08:30 NY Non-Farm Employment Change, +1 more)" in message
     assert "Timing warning: signal fired 13 min before cutoff" in message
+
+
+def test_is_signal_after_last_entry_uses_entry_reference_time():
+    assert is_signal_after_last_entry(
+        {
+            "confirmation_timestamp": pd.Timestamp(
+                "2026-10-08 09:58",
+                tz="America/New_York",
+            ),
+            "entry_timestamp": pd.Timestamp(
+                "2026-10-08 10:01",
+                tz="America/New_York",
+            ),
+        },
+        "10:00",
+    )
+    assert not is_signal_after_last_entry(
+        {
+            "entry_timestamp": pd.Timestamp(
+                "2026-10-08 10:00",
+                tz="America/New_York",
+            ),
+        },
+        "10:00",
+    )
 
 
 def test_format_watch_started_message_groups_strategy_lanes():

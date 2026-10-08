@@ -67,6 +67,7 @@ def test_find_vwap_ema9_cross_long_signal():
         VWAPEMACrossConfig(
             ema_length=3,
             earliest_signal_minute="09:30",
+            max_entry_extension_percent=0.05,
         ),
     )
 
@@ -91,11 +92,36 @@ def test_find_vwap_ema9_cross_short_signal():
         VWAPEMACrossConfig(
             ema_length=3,
             earliest_signal_minute="09:30",
+            max_entry_extension_percent=0.05,
         ),
     )
 
     assert reason == "APPROVED"
     assert signal["direction"] == "SHORT"
+
+
+def test_find_vwap_ema9_cross_rejects_chased_long_entry():
+    df = _session(
+        [
+            100, 99.8, 99.6,
+            99.5, 99.3, 99.2,
+            99.4, 99.7, 100.2,
+            100.8, 101.5, 102.2,
+            108.0, 108.2, 108.4,
+        ]
+    )
+
+    signal, reason = find_vwap_ema9_cross_signal(
+        df,
+        VWAPEMACrossConfig(
+            ema_length=3,
+            earliest_signal_minute="09:30",
+            max_entry_extension_percent=0.001,
+        ),
+    )
+
+    assert signal is None
+    assert reason == "VWAP_EMA9_ENTRY_TOO_EXTENDED"
 
 
 def test_build_vwap_ema9_cross_paper_trade_decision():
@@ -120,6 +146,7 @@ def test_build_vwap_ema9_cross_paper_trade_decision():
         cross_config=VWAPEMACrossConfig(
             ema_length=3,
             earliest_signal_minute="09:30",
+            max_entry_extension_percent=0.05,
         ),
     )
 

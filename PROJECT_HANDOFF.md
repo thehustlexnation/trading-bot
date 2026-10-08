@@ -301,6 +301,35 @@ Those are later experiments.
 Potential event research:
 Rockstar Games is privately held; Take-Two Interactive (`TTWO`) is the public parent. Event information and dates must be verified from authoritative current sources before hard-coding.
 
+## Post-Run Follow-Up: Volume Profile Context
+
+After the next live/alert run and before moving the system to a real-time VPS runner, evaluate adding a previous-session Volume Profile context layer.
+
+Source reviewed:
+- Video: `The BEST Volume Profile Trading Guide You'll EVER FIND`
+- Local files: downloaded MP4 plus auto-generated subtitle `.srt`
+
+Key concepts to convert into deterministic code:
+- Calculate previous-session Volume Profile levels for each symbol:
+  - POC: highest-volume price area
+  - VAH: value area high
+  - VAL: value area low
+  - value area around 70% of prior-session volume
+- Use completed previous-session levels only; do not build signals from changing current-session profile levels.
+- Start as a Slack context/filter layer, not automatic execution.
+
+Candidate uses:
+- Alert when an ORB/VWAP signal is near prior POC, VAH, or VAL.
+- Warn when a long signal is directly below likely VAH/POC resistance.
+- Warn when a short signal is directly above likely VAL/POC support.
+- Prefer continuation signals that break outside value, retest the boundary, and confirm structure.
+- Prefer reversal context when price leaves value and closes back inside value.
+
+Do not add this directly as a live strategy without backtesting. First add context messages, then test separate variants such as:
+- `ORB_RETEST_WITH_VOLUME_PROFILE`
+- `VWAP_EMA9_WITH_VOLUME_PROFILE`
+- `VALUE_AREA_RECLAIM_2R`
+
 ## Validation Standard
 
 The core principle is:
