@@ -21,6 +21,7 @@ from scripts.paper_trade import (
     format_watch_recap_message,
     format_watch_started_message,
     is_signal_after_last_entry,
+    market_direction_rejection_reason,
     parse_strategies,
     parse_symbols,
 )
@@ -234,6 +235,57 @@ def test_build_relative_strength_context_scores_long_alignment():
 
     assert context["alignment"] == "aligned"
     assert round(context["relative_change"], 4) == 0.03
+
+
+def test_market_direction_rejects_vwap_ema_long_in_weak_market():
+    reason = market_direction_rejection_reason(
+        strategy=VWAP_EMA_CROSS_STRATEGY_VERSION,
+        plan=FakePlan(
+            strategy_version=VWAP_EMA_CROSS_STRATEGY_VERSION,
+            position_side="long",
+        ),
+        signal={
+            "relative_strength": {
+                "benchmark_change": -0.0041,
+                "relative_change": 0.0017,
+            },
+        },
+    )
+
+    assert reason == "MARKET_WEAK_FOR_LONG"
+
+
+def test_market_direction_allows_vwap_ema_long_with_strong_relative_edge():
+    reason = market_direction_rejection_reason(
+        strategy=VWAP_EMA_CROSS_STRATEGY_VERSION,
+        plan=FakePlan(
+            strategy_version=VWAP_EMA_CROSS_STRATEGY_VERSION,
+            position_side="long",
+        ),
+        signal={
+            "relative_strength": {
+                "benchmark_change": -0.0041,
+                "relative_change": 0.0070,
+            },
+        },
+    )
+
+    assert reason is None
+
+
+def test_market_direction_does_not_block_orb_retest():
+    reason = market_direction_rejection_reason(
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(position_side="long"),
+        signal={
+            "relative_strength": {
+                "benchmark_change": -0.0041,
+                "relative_change": 0.0017,
+            },
+        },
+    )
+
+    assert reason is None
 
 
 def test_format_watch_recap_groups_stopped_reasons():

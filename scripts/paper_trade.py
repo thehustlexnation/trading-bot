@@ -411,6 +411,38 @@ def signal_quality_from_context(signal: dict) -> tuple[str, str]:
     return "B", "Strategy setup confirmed; relative strength is neutral."
 
 
+def market_direction_rejection_reason(
+    strategy: str,
+    plan,
+    signal: dict,
+    weak_benchmark_threshold: float = -0.0025,
+    strong_benchmark_threshold: float = 0.0025,
+    required_relative_edge: float = 0.005,
+) -> str | None:
+    if strategy != VWAP_EMA_CROSS_STRATEGY_VERSION:
+        return None
+
+    relative_strength = signal.get("relative_strength") if signal else None
+    if not relative_strength:
+        return None
+
+    benchmark_change = float(relative_strength["benchmark_change"])
+    relative_change = float(relative_strength["relative_change"])
+    if (
+        plan.position_side == "long"
+        and benchmark_change <= weak_benchmark_threshold
+        and relative_change < required_relative_edge
+    ):
+        return "MARKET_WEAK_FOR_LONG"
+    if (
+        plan.position_side == "short"
+        and benchmark_change >= strong_benchmark_threshold
+        and relative_change > -required_relative_edge
+    ):
+        return "MARKET_STRONG_FOR_SHORT"
+    return None
+
+
 def format_relative_strength_context(signal: dict) -> str:
     relative_strength = signal.get("relative_strength")
     if not relative_strength:
@@ -1292,6 +1324,19 @@ def main():
                     and is_signal_after_last_entry(decision.signal, args.last_entry)
                 ):
                     stopped_reasons.setdefault("LATE_SIGNAL_AFTER_LAST_ENTRY", []).append((symbol, strategy))
+                    active_lanes.remove((symbol, strategy))
+                    continue
+                market_rejection = (
+                    market_direction_rejection_reason(
+                        strategy=strategy,
+                        plan=decision.plan,
+                        signal=decision.signal,
+                    )
+                    if decision is not None and decision.plan is not None
+                    else None
+                )
+                if market_rejection:
+                    stopped_reasons.setdefault(market_rejection, []).append((symbol, strategy))
                     active_lanes.remove((symbol, strategy))
                     continue
 
