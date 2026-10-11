@@ -1,0 +1,25 @@
+name: Wake Railway Realtime Bot
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: wake-railway-realtime
+  cancel-in-progress: true
+
+jobs:
+  wake-railway-realtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Redeploy Railway worker
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway redeploy --yes
