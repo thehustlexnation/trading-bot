@@ -2,13 +2,14 @@
 
 This worker is for the VPS/Railway-style Monday paper-trading setup.
 
-It keeps running continuously, sleeps until the next US trading session, then:
+The production setup is cron-triggered so the host can stay offline most of
+the time. When Railway starts near market open, it:
 
 1. Runs the ForexFactory macro news risk check.
 2. Runs the stock catalyst risk check.
 3. Starts the live signal watcher before the open.
 4. Sends Slack alerts and recap messages.
-5. Sleeps until the next trading session.
+5. Exits after the session cutoff.
 
 Default schedule is New York time:
 
@@ -19,10 +20,14 @@ Default schedule is New York time:
 ## Start Command
 
 ```bash
-python scripts/realtime_runner.py
+python scripts/realtime_runner.py --once --max-wait-minutes 60
 ```
 
 The included `Procfile` runs the same command as a worker process.
+
+With this command, the worker only waits if the next session is within 60
+minutes. If it is started on a weekend or many hours early, it exits so Railway
+does not keep charging for an idle process.
 
 ## Required Environment Variables
 
@@ -50,16 +55,19 @@ REALTIME_HTF_SYMBOLS=AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,
 REALTIME_STRATEGIES=ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R
 REALTIME_NEWS_START=08:00
 REALTIME_NEWS_END=10:30
+REALTIME_MAX_WAIT_MINUTES=60
 ```
 
 Keep `REALTIME_SUBMIT_PAPER=false` for the first Monday run. That keeps the system in alerts-only mode.
 
 ## Local Smoke Test
 
-This validates argument parsing and exits after one session. Do not use it during market hours unless you expect alerts.
+This validates argument parsing and exits if the next session is too far away.
+Do not use it during market hours unless you expect alerts.
 
 ```bash
-python scripts/realtime_runner.py --once
+python scripts/realtime_runner.py --once --max-wait-minutes 60
 ```
 
-If the market is closed, the runner will sleep until the next trading session.
+If the next session is within 60 minutes, the runner will sleep until start and
+run that session. Otherwise, it exits cleanly.

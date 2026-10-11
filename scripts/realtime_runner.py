@@ -119,6 +119,12 @@ def run_trading_watch(args) -> int:
     return run_command(command)
 
 
+def should_exit_before_wait(wait_seconds: int, max_wait_minutes: int | None) -> bool:
+    if max_wait_minutes is None:
+        return False
+    return wait_seconds > max_wait_minutes * 60
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Long-running real-time paper alert runner for VPS deployment."
@@ -135,6 +141,19 @@ def parse_args():
     parser.add_argument("--equity", type=float, default=float(os.getenv("REALTIME_EQUITY", "10000")))
     parser.add_argument("--submit-paper", action="store_true", default=env_bool("REALTIME_SUBMIT_PAPER", False))
     parser.add_argument("--once", action="store_true", help="Run one session and exit.")
+    parser.add_argument(
+        "--max-wait-minutes",
+        type=int,
+        default=(
+            int(os.getenv("REALTIME_MAX_WAIT_MINUTES"))
+            if os.getenv("REALTIME_MAX_WAIT_MINUTES")
+            else None
+        ),
+        help=(
+            "Exit instead of sleeping when the next session is farther away. "
+            "Use this for cron-triggered deployments."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -153,6 +172,13 @@ def main() -> None:
         run_at = next_runner_start(now, start_time)
         wait_seconds = max(0, int((run_at - now).total_seconds()))
         print(f"Next trading run: {run_at.isoformat()} ({wait_seconds}s)", flush=True)
+        if should_exit_before_wait(wait_seconds, args.max_wait_minutes):
+            print(
+                "Next trading run is outside max wait window; exiting so the host can sleep.",
+                flush=True,
+            )
+            raise SystemExit(0)
+
         sleep_time.sleep(wait_seconds)
 
         run_date = datetime.now(tz=NY_TZ).date()
