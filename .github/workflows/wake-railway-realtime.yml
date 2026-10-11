@@ -22,4 +22,7 @@ jobs:
       - name: Redeploy Railway worker
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway redeploy --yes
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+        run: |
+          railway link --project "$RAILWAY_PROJECT_ID" --environment production
+          railway redeploy --service trading-bot --yes
