@@ -443,6 +443,27 @@ def market_direction_rejection_reason(
     return None
 
 
+def orb_relative_strength_rejection_reason(
+    strategy: str,
+    plan,
+    signal: dict,
+    required_relative_edge: float = 0.0015,
+) -> str | None:
+    if strategy != ORB_BODY_STRATEGY_VERSION:
+        return None
+
+    relative_strength = signal.get("relative_strength") if signal else None
+    if not relative_strength:
+        return None
+
+    relative_change = float(relative_strength["relative_change"])
+    if plan.position_side == "long" and relative_change < required_relative_edge:
+        return "WEAK_ORB_RELATIVE_STRENGTH"
+    if plan.position_side == "short" and relative_change > -required_relative_edge:
+        return "WEAK_ORB_RELATIVE_STRENGTH"
+    return None
+
+
 def format_relative_strength_context(signal: dict) -> str:
     relative_strength = signal.get("relative_strength")
     if not relative_strength:
@@ -1337,6 +1358,19 @@ def main():
                 )
                 if market_rejection:
                     stopped_reasons.setdefault(market_rejection, []).append((symbol, strategy))
+                    active_lanes.remove((symbol, strategy))
+                    continue
+                orb_rs_rejection = (
+                    orb_relative_strength_rejection_reason(
+                        strategy=strategy,
+                        plan=decision.plan,
+                        signal=decision.signal,
+                    )
+                    if decision is not None and decision.plan is not None
+                    else None
+                )
+                if orb_rs_rejection:
+                    stopped_reasons.setdefault(orb_rs_rejection, []).append((symbol, strategy))
                     active_lanes.remove((symbol, strategy))
                     continue
 

@@ -22,6 +22,7 @@ from scripts.paper_trade import (
     format_watch_started_message,
     is_signal_after_last_entry,
     market_direction_rejection_reason,
+    orb_relative_strength_rejection_reason,
     parse_strategies,
     parse_symbols,
 )
@@ -281,6 +282,65 @@ def test_market_direction_does_not_block_orb_retest():
             "relative_strength": {
                 "benchmark_change": -0.0041,
                 "relative_change": 0.0017,
+            },
+        },
+    )
+
+    assert reason is None
+
+
+def test_orb_relative_strength_blocks_weak_long_edge():
+    reason = orb_relative_strength_rejection_reason(
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(position_side="long"),
+        signal={
+            "relative_strength": {
+                "relative_change": 0.0006,
+            },
+        },
+    )
+
+    assert reason == "WEAK_ORB_RELATIVE_STRENGTH"
+
+
+def test_orb_relative_strength_allows_strong_long_edge():
+    reason = orb_relative_strength_rejection_reason(
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(position_side="long"),
+        signal={
+            "relative_strength": {
+                "relative_change": 0.0020,
+            },
+        },
+    )
+
+    assert reason is None
+
+
+def test_orb_relative_strength_blocks_weak_short_edge():
+    reason = orb_relative_strength_rejection_reason(
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(position_side="short"),
+        signal={
+            "relative_strength": {
+                "relative_change": -0.0006,
+            },
+        },
+    )
+
+    assert reason == "WEAK_ORB_RELATIVE_STRENGTH"
+
+
+def test_orb_relative_strength_does_not_apply_to_vwap_ema():
+    reason = orb_relative_strength_rejection_reason(
+        strategy=VWAP_EMA_CROSS_STRATEGY_VERSION,
+        plan=FakePlan(
+            strategy_version=VWAP_EMA_CROSS_STRATEGY_VERSION,
+            position_side="long",
+        ),
+        signal={
+            "relative_strength": {
+                "relative_change": 0.0006,
             },
         },
     )
