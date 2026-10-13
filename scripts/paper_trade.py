@@ -419,8 +419,9 @@ def market_direction_rejection_reason(
     weak_benchmark_threshold: float = -0.0025,
     strong_benchmark_threshold: float = 0.0025,
     required_relative_edge: float = 0.005,
+    orb_required_relative_edge: float = 0.015,
 ) -> str | None:
-    if strategy != VWAP_EMA_CROSS_STRATEGY_VERSION:
+    if strategy not in {VWAP_EMA_CROSS_STRATEGY_VERSION, ORB_BODY_STRATEGY_VERSION}:
         return None
 
     relative_strength = signal.get("relative_strength") if signal else None
@@ -429,16 +430,21 @@ def market_direction_rejection_reason(
 
     benchmark_change = float(relative_strength["benchmark_change"])
     relative_change = float(relative_strength["relative_change"])
+    edge_required = (
+        orb_required_relative_edge
+        if strategy == ORB_BODY_STRATEGY_VERSION
+        else required_relative_edge
+    )
     if (
         plan.position_side == "long"
         and benchmark_change <= weak_benchmark_threshold
-        and relative_change < required_relative_edge
+        and relative_change < edge_required
     ):
         return "MARKET_WEAK_FOR_LONG"
     if (
         plan.position_side == "short"
         and benchmark_change >= strong_benchmark_threshold
-        and relative_change > -required_relative_edge
+        and relative_change > -edge_required
     ):
         return "MARKET_STRONG_FOR_SHORT"
     return None

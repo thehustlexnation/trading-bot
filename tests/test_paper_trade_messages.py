@@ -274,14 +274,29 @@ def test_market_direction_allows_vwap_ema_long_with_strong_relative_edge():
     assert reason is None
 
 
-def test_market_direction_does_not_block_orb_retest():
+def test_market_direction_rejects_orb_short_against_strong_market_without_extreme_edge():
     reason = market_direction_rejection_reason(
         strategy=ORB_BODY_STRATEGY_VERSION,
-        plan=FakePlan(position_side="long"),
+        plan=FakePlan(position_side="short"),
         signal={
             "relative_strength": {
-                "benchmark_change": -0.0041,
-                "relative_change": 0.0017,
+                "benchmark_change": 0.0052,
+                "relative_change": -0.0128,
+            },
+        },
+    )
+
+    assert reason == "MARKET_STRONG_FOR_SHORT"
+
+
+def test_market_direction_allows_orb_short_against_strong_market_with_extreme_edge():
+    reason = market_direction_rejection_reason(
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(position_side="short"),
+        signal={
+            "relative_strength": {
+                "benchmark_change": 0.0052,
+                "relative_change": -0.0160,
             },
         },
     )
