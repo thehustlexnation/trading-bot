@@ -8,6 +8,7 @@ from paper_trading.signal_builder import PaperTradeDecision
 
 
 DEFAULT_AUDIT_PATH = Path("logs/paper_trading_decisions.jsonl")
+DEFAULT_WATCH_JOURNAL_PATH = Path("logs/paper_trading_watch_journal.jsonl")
 
 
 def _json_default(value: Any):
@@ -64,6 +65,22 @@ def decision_to_audit_record(
 def append_audit_record(
     record: dict,
     path: Path = DEFAULT_AUDIT_PATH,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                record,
+                default=_json_default,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+
+def append_watch_journal_record(
+    record: dict,
+    path: Path = DEFAULT_WATCH_JOURNAL_PATH,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:

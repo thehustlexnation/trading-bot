@@ -13,6 +13,7 @@ from scripts.paper_trade import (
     WatchedTrade,
     build_approval_url,
     build_relative_strength_context,
+    build_watch_journal_record,
     build_strategy_lanes,
     calculate_intraday_change,
     evaluate_watched_trade,
@@ -31,7 +32,12 @@ from scripts.paper_trade import (
 @dataclass
 class FakeArgs:
     symbol: str = "AAPL"
+    symbols: str | None = None
     cutoff: str = "10:15"
+    last_entry: str = "10:00"
+    source: str = "live"
+    submit: bool = False
+    strategies: str = ORB_BODY_STRATEGY_VERSION
 
 
 @dataclass
@@ -419,6 +425,45 @@ def test_format_watch_recap_groups_stopped_reasons():
     assert "NO_VWAP_PULLBACK_CONFIRMATION: AAPL (VWAP)" in message
     assert "SNDK (ORB)" in message
     assert "NVDA (VWAP)" in message
+
+
+def test_build_watch_journal_record_summarizes_watch_run():
+    record = build_watch_journal_record(
+        trading_date="2026-10-13",
+        args=FakeArgs(
+            symbol="AAPL,INTC",
+            symbols="AAPL,INTC",
+            strategies=f"{ORB_BODY_STRATEGY_VERSION},{VWAP_EMA_CROSS_STRATEGY_VERSION}",
+        ),
+        approved_lanes={("AAPL", ORB_BODY_STRATEGY_VERSION)},
+        stopped_reasons={
+            "MARKET_STRONG_FOR_SHORT": [("GOOGL", ORB_BODY_STRATEGY_VERSION)],
+        },
+        active_lanes={("NVDA", VWAP_EMA_CROSS_STRATEGY_VERSION)},
+        trade_outcomes=[
+            TradeOutcome(
+                symbol="AAPL",
+                strategy=ORB_BODY_STRATEGY_VERSION,
+                outcome="cutoff close",
+                r_multiple=-0.52,
+                estimated_pnl=-10.80,
+            ),
+            TradeOutcome(
+                symbol="INTC",
+                strategy=ORB_BODY_STRATEGY_VERSION,
+                outcome="cutoff close",
+                r_multiple=0.20,
+                estimated_pnl=5.01,
+            ),
+        ],
+    )
+
+    assert record["trading_date"] == "2026-10-13"
+    assert record["total_r"] == pytest.approx(-0.32)
+    assert record["total_estimated_pnl"] == pytest.approx(-5.79)
+    assert record["approved_lanes"][0]["symbol"] == "AAPL"
+    assert record["stopped_reasons"]["MARKET_STRONG_FOR_SHORT"][0]["symbol"] == "GOOGL"
+    assert record["active_lanes_at_cutoff"][0]["symbol"] == "NVDA"
 
 
 def test_evaluate_watched_trade_sends_one_r_update_once():

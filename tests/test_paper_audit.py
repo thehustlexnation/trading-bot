@@ -2,7 +2,11 @@ import json
 
 import pandas as pd
 
-from paper_trading.audit import append_audit_record, decision_to_audit_record
+from paper_trading.audit import (
+    append_audit_record,
+    append_watch_journal_record,
+    decision_to_audit_record,
+)
 from paper_trading.config import PaperTradingConfig
 from paper_trading.signal_builder import build_retest_body_paper_trade_decision
 
@@ -72,3 +76,22 @@ def test_append_audit_record_writes_jsonl(tmp_path):
         "approved": True,
         "symbol": "AAPL",
     }
+
+
+def test_append_watch_journal_record_writes_jsonl(tmp_path):
+    path = tmp_path / "watch_journal.jsonl"
+
+    append_watch_journal_record(
+        {
+            "trading_date": "2026-10-13",
+            "total_r": -0.32,
+            "trade_outcomes": [
+                {"symbol": "AAPL", "outcome": "cutoff close"},
+            ],
+        },
+        path=path,
+    )
+
+    rows = path.read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    assert json.loads(rows[0])["trading_date"] == "2026-10-13"

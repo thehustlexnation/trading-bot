@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import os
 import sys
 import time as sleep_time
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -16,7 +16,11 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from paper_trading.alpaca_adapter import submit_bracket_order
-from paper_trading.audit import append_audit_record, decision_to_audit_record
+from paper_trading.audit import (
+    append_audit_record,
+    append_watch_journal_record,
+    decision_to_audit_record,
+)
 from paper_trading.broker import (
     create_alpaca_paper_trading_client,
     get_account_snapshot,
@@ -830,6 +834,63 @@ def build_trade_outcome(
     )
 
 
+def _lane_to_journal_item(lane: tuple[str, str]) -> dict:
+    symbol, strategy = lane
+    return {
+        "symbol": symbol,
+        "strategy": strategy,
+        "strategy_label": _strategy_label(strategy),
+    }
+
+
+def build_watch_journal_record(
+    trading_date,
+    args,
+    approved_lanes: set[tuple[str, str]],
+    stopped_reasons: dict[str, list[tuple[str, str]]],
+    active_lanes: set[tuple[str, str]],
+    trade_outcomes: list[TradeOutcome],
+) -> dict:
+    return {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "trading_date": str(trading_date),
+        "source": args.source,
+        "dry_run": not args.submit,
+        "cutoff": args.cutoff,
+        "last_entry": args.last_entry,
+        "symbols": parse_symbols(args.symbol, args.symbols),
+        "strategies": parse_strategies(args.strategies),
+        "approved_lanes": [
+            _lane_to_journal_item(lane)
+            for lane in sorted(approved_lanes)
+        ],
+        "stopped_reasons": {
+            reason: [
+                _lane_to_journal_item(lane)
+                for lane in sorted(lanes)
+            ]
+            for reason, lanes in sorted(stopped_reasons.items())
+        },
+        "active_lanes_at_cutoff": [
+            _lane_to_journal_item(lane)
+            for lane in sorted(active_lanes)
+        ],
+        "trade_outcomes": [
+            {
+                "symbol": outcome.symbol,
+                "strategy": outcome.strategy,
+                "strategy_label": _strategy_label(outcome.strategy),
+                "outcome": outcome.outcome,
+                "r_multiple": outcome.r_multiple,
+                "estimated_pnl": outcome.estimated_pnl,
+            }
+            for outcome in trade_outcomes
+        ],
+        "total_r": sum(outcome.r_multiple for outcome in trade_outcomes),
+        "total_estimated_pnl": sum(outcome.estimated_pnl for outcome in trade_outcomes),
+    }
+
+
 def orb_failed_reclaim_reason(
     trade: WatchedTrade,
     candle: pd.Series,
@@ -1551,6 +1612,17 @@ def main():
         )
     elif active_lanes:
         print("WATCH COMPLETE: no approved signal before cutoff.")
+
+    append_watch_journal_record(
+        build_watch_journal_record(
+            trading_date=trading_date,
+            args=args,
+            approved_lanes=approved_lanes,
+            stopped_reasons=stopped_reasons,
+            active_lanes=active_lanes,
+            trade_outcomes=trade_outcomes,
+        )
+    )
 
     if approved_lanes:
         approved = [
