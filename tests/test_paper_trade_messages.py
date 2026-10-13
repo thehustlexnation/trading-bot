@@ -477,6 +477,90 @@ def test_evaluate_watched_trade_reports_target_hit():
     assert trade.closed is True
 
 
+def test_evaluate_watched_trade_exits_failed_orb_breakdown_reclaim():
+    trade = WatchedTrade(
+        symbol="AAPL",
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(
+            position_side="short",
+            entry_price_reference=100.0,
+            stop_price=105.0,
+            target_price=90.0,
+            risk_per_share=5.0,
+        ),
+        signal_time=pd.Timestamp("2026-09-30 09:50", tz="America/New_York"),
+        signal={
+            "breakout_high": 104.0,
+            "breakout_low": 101.0,
+        },
+    )
+    session_df = pd.DataFrame(
+        {
+            "timestamp_ny": [
+                pd.Timestamp("2026-09-30 09:49", tz="America/New_York"),
+                pd.Timestamp("2026-09-30 09:50", tz="America/New_York"),
+            ],
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.5],
+            "low": [99.0, 100.5],
+            "close": [100.0, 102.0],
+            "volume": [1000, 1000],
+        }
+    )
+
+    message, terminal, outcome = evaluate_watched_trade(trade, session_df)
+
+    assert "AAPL result: early invalidation" in message
+    assert "Reason: FAILED_BREAKDOWN_RECLAIM" in message
+    assert "Result: -0.40R" in message
+    assert terminal is True
+    assert outcome.outcome == "failed_breakdown_reclaim"
+    assert outcome.r_multiple == -0.4
+    assert trade.closed is True
+
+
+def test_evaluate_watched_trade_exits_failed_orb_breakout_reclaim():
+    trade = WatchedTrade(
+        symbol="AAPL",
+        strategy=ORB_BODY_STRATEGY_VERSION,
+        plan=FakePlan(
+            position_side="long",
+            entry_price_reference=100.0,
+            stop_price=95.0,
+            target_price=110.0,
+            risk_per_share=5.0,
+        ),
+        signal_time=pd.Timestamp("2026-09-30 09:50", tz="America/New_York"),
+        signal={
+            "breakout_high": 99.0,
+            "breakout_low": 96.0,
+        },
+    )
+    session_df = pd.DataFrame(
+        {
+            "timestamp_ny": [
+                pd.Timestamp("2026-09-30 09:49", tz="America/New_York"),
+                pd.Timestamp("2026-09-30 09:50", tz="America/New_York"),
+            ],
+            "open": [100.0, 99.0],
+            "high": [101.0, 99.5],
+            "low": [99.0, 97.5],
+            "close": [100.0, 98.0],
+            "volume": [1000, 1000],
+        }
+    )
+
+    message, terminal, outcome = evaluate_watched_trade(trade, session_df)
+
+    assert "AAPL result: early invalidation" in message
+    assert "Reason: FAILED_BREAKOUT_RECLAIM" in message
+    assert "Result: -0.40R" in message
+    assert terminal is True
+    assert outcome.outcome == "failed_breakout_reclaim"
+    assert outcome.r_multiple == -0.4
+    assert trade.closed is True
+
+
 def test_format_watched_trade_cutoff_result_marks_open_result():
     trade = WatchedTrade(
         symbol="AAPL",

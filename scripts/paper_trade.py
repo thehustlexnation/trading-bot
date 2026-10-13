@@ -75,6 +75,7 @@ class WatchedTrade:
     strategy: str
     plan: object
     signal_time: object
+    signal: dict | None = None
     one_r_sent: bool = False
     closed: bool = False
 
@@ -790,6 +791,25 @@ def _plain_result_line(plan, price: float, r_multiple: float) -> str:
     )
 
 
+def add_intraday_vwap(session_df: pd.DataFrame) -> pd.DataFrame:
+    df = session_df.copy().sort_values("timestamp_ny")
+    if "open" not in df.columns:
+        df["open"] = df["close"]
+    if "volume" not in df.columns:
+        df["volume"] = 1.0
+    typical_price = (
+        df["open"].astype(float)
+        + df["high"].astype(float)
+        + df["low"].astype(float)
+        + df["close"].astype(float)
+    ) / 4.0
+    volume = df["volume"].astype(float)
+    cumulative_volume = volume.cumsum()
+    df["session_vwap"] = (typical_price * volume).cumsum() / cumulative_volume
+    df.loc[cumulative_volume == 0, "session_vwap"] = typical_price
+    return df
+
+
 def build_trade_outcome(
     trade: WatchedTrade,
     outcome: str,
@@ -804,6 +824,31 @@ def build_trade_outcome(
     )
 
 
+def orb_failed_reclaim_reason(
+    trade: WatchedTrade,
+    candle: pd.Series,
+) -> str | None:
+    if trade.strategy != ORB_BODY_STRATEGY_VERSION or trade.signal is None:
+        return None
+    if trade.one_r_sent:
+        return None
+
+    plan = trade.plan
+    close = float(candle["close"])
+    vwap = candle.get("session_vwap")
+    if pd.isna(vwap):
+        return None
+    vwap = float(vwap)
+    or_high = float(trade.signal["breakout_high"])
+    or_low = float(trade.signal["breakout_low"])
+
+    if plan.position_side == "long" and close < or_high and close < vwap:
+        return "FAILED_BREAKOUT_RECLAIM"
+    if plan.position_side == "short" and close > or_low and close > vwap:
+        return "FAILED_BREAKDOWN_RECLAIM"
+    return None
+
+
 def evaluate_watched_trade(
     trade: WatchedTrade,
     session_df: pd.DataFrame,
@@ -814,7 +859,7 @@ def evaluate_watched_trade(
         raise ValueError("session_df must include timestamp_ny.")
 
     plan = trade.plan
-    df = session_df.sort_values("timestamp_ny")
+    df = add_intraday_vwap(session_df)
     if trade.signal_time is not None:
         df = df[df["timestamp_ny"] >= pd.Timestamp(trade.signal_time)]
     if df.empty:
@@ -874,6 +919,24 @@ def evaluate_watched_trade(
                 f"{_plain_result_line(plan, plan.target_price, 2.0)}",
                 True,
                 build_trade_outcome(trade, "target hit", 2.0),
+            )
+
+        failed_reclaim = orb_failed_reclaim_reason(trade, candle)
+        if failed_reclaim:
+            exit_price = float(candle["close"])
+            r_multiple = _r_multiple_at_price(plan, exit_price)
+            trade.closed = True
+            return (
+                f"{plan.symbol} result: early invalidation\n"
+                f"Strategy: {_strategy_label(trade.strategy)}\n"
+                f"Time: {timestamp}\n"
+                f"Reason: {failed_reclaim}\n"
+                f"Exit reference: {exit_price:.2f}\n"
+                f"Result: {r_multiple:+.2f}R\n"
+                f"Estimated P/L: ${_estimated_trade_pnl(plan, r_multiple):+.2f}\n"
+                f"{_plain_result_line(plan, exit_price, r_multiple)}",
+                True,
+                build_trade_outcome(trade, failed_reclaim.lower(), r_multiple),
             )
 
         if one_r_hit and not trade.one_r_sent:
@@ -1395,6 +1458,7 @@ def main():
                             strategy=strategy,
                             plan=decision.plan,
                             signal_time=_tracking_start_time(decision),
+                            signal=decision.signal,
                         )
                     )
                 approved_lanes.add((symbol, strategy))
