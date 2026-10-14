@@ -23,6 +23,7 @@ from scripts.paper_trade import (
     format_watch_started_message,
     is_signal_after_last_entry,
     market_direction_rejection_reason,
+    macro_news_rejection_reason,
     orb_relative_strength_rejection_reason,
     parse_strategies,
     parse_symbols,
@@ -260,6 +261,21 @@ def test_market_direction_rejects_vwap_ema_long_in_weak_market():
     )
 
     assert reason == "MARKET_WEAK_FOR_LONG"
+
+
+def test_macro_news_blocks_new_entries_by_default():
+    assert macro_news_rejection_reason({"status": "high"}) == "HIGH_IMPACT_NEWS_RISK"
+
+
+def test_macro_news_can_be_explicitly_allowed_for_research():
+    assert macro_news_rejection_reason(
+        {"status": "high"},
+        allow_high_impact_news=True,
+    ) is None
+
+
+def test_clear_macro_window_does_not_block_entries():
+    assert macro_news_rejection_reason({"status": "clear"}) is None
 
 
 def test_market_direction_allows_vwap_ema_long_with_strong_relative_edge():

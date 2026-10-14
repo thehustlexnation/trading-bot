@@ -143,6 +143,11 @@ def parse_args():
     parser.add_argument("--alert-status", action="store_true", help="Send start and no-signal completion alerts.")
     parser.add_argument("--macro-news-start", default="08:00", help="New York HH:MM macro risk window start.")
     parser.add_argument("--macro-news-end", default="10:30", help="New York HH:MM macro risk window end.")
+    parser.add_argument(
+        "--allow-high-impact-news",
+        action="store_true",
+        help="Allow new entries when high-impact USD news is present in the macro risk window.",
+    )
     return parser.parse_args()
 
 
@@ -547,6 +552,17 @@ def format_macro_risk_context(macro_risk_context: dict | None) -> str:
         return f"- Macro risk: HIGH ({first_label}{more})"
     reason = macro_risk_context.get("reason", "not available")
     return f"- Macro risk: unavailable ({reason})"
+
+
+def macro_news_rejection_reason(
+    macro_risk_context: dict | None,
+    allow_high_impact_news: bool = False,
+) -> str | None:
+    if allow_high_impact_news:
+        return None
+    if macro_risk_context and macro_risk_context.get("status") == "high":
+        return "HIGH_IMPACT_NEWS_RISK"
+    return None
 
 
 def signal_reference_timestamp(signal: dict):
@@ -1462,6 +1478,14 @@ def main():
             )
 
             if reason == "APPROVED":
+                macro_rejection = macro_news_rejection_reason(
+                    macro_risk_context,
+                    allow_high_impact_news=args.allow_high_impact_news,
+                )
+                if macro_rejection:
+                    stopped_reasons.setdefault(macro_rejection, []).append((symbol, strategy))
+                    active_lanes.remove((symbol, strategy))
+                    continue
                 quality = "B"
                 if decision is not None and decision.signal is not None:
                     quality, _ = signal_quality_from_context(decision.signal)
