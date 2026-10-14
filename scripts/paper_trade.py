@@ -32,6 +32,11 @@ from paper_trading.htf_breakout import (
     STRATEGY_VERSION as HTF_BREAKOUT_STRATEGY_VERSION,
     build_htf_breakout_paper_trade_decision,
 )
+from paper_trading.post_news_breakout import (
+    STRATEGY_VERSION as POST_NEWS_BREAKOUT_STRATEGY_VERSION,
+    PostNewsBreakoutConfig,
+    build_post_news_breakout_paper_trade_decision,
+)
 from paper_trading.notifications import (
     notify,
     notify_email,
@@ -187,6 +192,7 @@ def parse_strategies(strategies: str) -> list[str]:
         HTF_BREAKOUT_STRATEGY_VERSION,
         VWAP_PULLBACK_STRATEGY_VERSION,
         VWAP_EMA_CROSS_STRATEGY_VERSION,
+        POST_NEWS_BREAKOUT_STRATEGY_VERSION,
     }
     unknown = sorted(set(parsed) - allowed)
     if unknown:
@@ -332,6 +338,8 @@ def format_watch_started_message(
         lines.append(f"- VWAP pullback: {_format_symbol_list(symbols)}")
     if VWAP_EMA_CROSS_STRATEGY_VERSION in strategies:
         lines.append(f"- VWAP + EMA9 cross: {_format_symbol_list(symbols)}")
+    if POST_NEWS_BREAKOUT_STRATEGY_VERSION in strategies:
+        lines.append(f"- Post-news breakout: {_format_symbol_list(symbols)}")
     if HTF_BREAKOUT_STRATEGY_VERSION in strategies:
         lines.append(f"- HTF breakout: {_format_symbol_list(htf_symbols)}")
     lines.extend(
@@ -670,6 +678,14 @@ def format_approved_message(
             f"- VWAP reference: {vwap_reference}\n"
             f"- EMA9 reference: {ema_reference}"
         )
+    elif plan.strategy_version == POST_NEWS_BREAKOUT_STRATEGY_VERSION:
+        what_happened = "Post-news range breakout, retest, and VWAP/EMA9 confirmation detected."
+        timing_lines = (
+            f"- News window end: {signal.get('news_window_end', 'n/a')} NY\n"
+            f"- Breakout: {breakout_time}\n"
+            f"- Retest: {retest_time}\n"
+            f"- Confirmation: {confirmation_time}"
+        )
     elif plan.strategy_version == HTF_BREAKOUT_STRATEGY_VERSION:
         what_happened = "Higher-timeframe resistance breakout, retest, and confirmation detected."
         timing_lines = (
@@ -772,6 +788,8 @@ def _strategy_label(strategy: str) -> str:
         return "VWAP pullback"
     if strategy == VWAP_EMA_CROSS_STRATEGY_VERSION:
         return "VWAP + EMA9 cross"
+    if strategy == POST_NEWS_BREAKOUT_STRATEGY_VERSION:
+        return "Post-news breakout"
     return strategy
 
 
@@ -784,6 +802,8 @@ def _strategy_short_label(strategy: str) -> str:
         return "VWAP"
     if strategy == VWAP_EMA_CROSS_STRATEGY_VERSION:
         return "XEMA"
+    if strategy == POST_NEWS_BREAKOUT_STRATEGY_VERSION:
+        return "NEWS"
     return strategy
 
 
@@ -1263,6 +1283,17 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
             cross_config=VWAPEMACrossConfig(),
             realized_daily_pnl=args.realized_daily_pnl,
         )
+    elif strategy_version == POST_NEWS_BREAKOUT_STRATEGY_VERSION:
+        decision = build_post_news_breakout_paper_trade_decision(
+            session_df=session_df,
+            symbol=args.symbol,
+            account_equity=account_equity,
+            paper_config=config,
+            news_config=PostNewsBreakoutConfig(
+                news_window_end=args.macro_news_end,
+            ),
+            realized_daily_pnl=args.realized_daily_pnl,
+        )
     else:
         raise ValueError(f"Unknown strategy lane: {strategy_version}")
 
@@ -1463,6 +1494,13 @@ def main():
         and (active_lanes or any(not trade.closed for trade in watched_trades))
     ):
         for symbol, strategy in list(active_lanes):
+            if (
+                strategy == POST_NEWS_BREAKOUT_STRATEGY_VERSION
+                and macro_risk_context.get("status") != "high"
+            ):
+                stopped_reasons.setdefault("NO_HIGH_IMPACT_NEWS_EVENT", []).append((symbol, strategy))
+                active_lanes.remove((symbol, strategy))
+                continue
             if symbol in claimed_symbols:
                 stopped_reasons.setdefault("SYMBOL_ALREADY_HAS_ALERT", []).append((symbol, strategy))
                 active_lanes.remove((symbol, strategy))
