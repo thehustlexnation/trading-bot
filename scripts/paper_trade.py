@@ -1516,10 +1516,12 @@ def main():
             )
 
             if reason == "APPROVED":
-                macro_rejection = macro_news_rejection_reason(
-                    macro_risk_context,
-                    allow_high_impact_news=args.allow_high_impact_news,
-                )
+                macro_rejection = None
+                if strategy != POST_NEWS_BREAKOUT_STRATEGY_VERSION:
+                    macro_rejection = macro_news_rejection_reason(
+                        macro_risk_context,
+                        allow_high_impact_news=args.allow_high_impact_news,
+                    )
                 if macro_rejection:
                     stopped_reasons.setdefault(macro_rejection, []).append((symbol, strategy))
                     active_lanes.remove((symbol, strategy))
