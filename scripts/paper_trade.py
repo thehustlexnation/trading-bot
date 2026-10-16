@@ -37,6 +37,11 @@ from paper_trading.post_news_breakout import (
     PostNewsBreakoutConfig,
     build_post_news_breakout_paper_trade_decision,
 )
+from paper_trading.failed_breakdown_reversal import (
+    STRATEGY_VERSION as FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION,
+    FailedBreakdownReversalConfig,
+    build_failed_breakdown_reversal_paper_trade_decision,
+)
 from paper_trading.notifications import (
     notify,
     notify_email,
@@ -193,6 +198,7 @@ def parse_strategies(strategies: str) -> list[str]:
         VWAP_PULLBACK_STRATEGY_VERSION,
         VWAP_EMA_CROSS_STRATEGY_VERSION,
         POST_NEWS_BREAKOUT_STRATEGY_VERSION,
+        FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION,
     }
     unknown = sorted(set(parsed) - allowed)
     if unknown:
@@ -340,6 +346,8 @@ def format_watch_started_message(
         lines.append(f"- VWAP + EMA9 cross: {_format_symbol_list(symbols)}")
     if POST_NEWS_BREAKOUT_STRATEGY_VERSION in strategies:
         lines.append(f"- Post-news breakout: {_format_symbol_list(symbols)}")
+    if FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION in strategies:
+        lines.append(f"- Failed breakdown reversal: {_format_symbol_list(symbols)}")
     if HTF_BREAKOUT_STRATEGY_VERSION in strategies:
         lines.append(f"- HTF breakout: {_format_symbol_list(htf_symbols)}")
     lines.extend(
@@ -438,7 +446,11 @@ def market_direction_rejection_reason(
     required_relative_edge: float = 0.005,
     orb_required_relative_edge: float = 0.015,
 ) -> str | None:
-    if strategy not in {VWAP_EMA_CROSS_STRATEGY_VERSION, ORB_BODY_STRATEGY_VERSION}:
+    if strategy not in {
+        VWAP_EMA_CROSS_STRATEGY_VERSION,
+        ORB_BODY_STRATEGY_VERSION,
+        FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION,
+    }:
         return None
 
     relative_strength = signal.get("relative_strength") if signal else None
@@ -686,6 +698,13 @@ def format_approved_message(
             f"- Retest: {retest_time}\n"
             f"- Confirmation: {confirmation_time}"
         )
+    elif plan.strategy_version == FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION:
+        what_happened = "Failed breakdown, OR low reclaim, and VWAP/EMA9 reversal confirmation detected."
+        timing_lines = (
+            f"- Breakdown: {signal.get('breakdown_timestamp', 'n/a')}\n"
+            f"- Failure/reclaim: {signal.get('failure_timestamp', 'n/a')}\n"
+            f"- Confirmation: {confirmation_time}"
+        )
     elif plan.strategy_version == HTF_BREAKOUT_STRATEGY_VERSION:
         what_happened = "Higher-timeframe resistance breakout, retest, and confirmation detected."
         timing_lines = (
@@ -790,6 +809,8 @@ def _strategy_label(strategy: str) -> str:
         return "VWAP + EMA9 cross"
     if strategy == POST_NEWS_BREAKOUT_STRATEGY_VERSION:
         return "Post-news breakout"
+    if strategy == FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION:
+        return "Failed breakdown reversal"
     return strategy
 
 
@@ -804,6 +825,8 @@ def _strategy_short_label(strategy: str) -> str:
         return "XEMA"
     if strategy == POST_NEWS_BREAKOUT_STRATEGY_VERSION:
         return "NEWS"
+    if strategy == FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION:
+        return "REV"
     return strategy
 
 
@@ -1292,6 +1315,15 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
             news_config=PostNewsBreakoutConfig(
                 news_window_end=args.macro_news_end,
             ),
+            realized_daily_pnl=args.realized_daily_pnl,
+        )
+    elif strategy_version == FAILED_BREAKDOWN_REVERSAL_STRATEGY_VERSION:
+        decision = build_failed_breakdown_reversal_paper_trade_decision(
+            session_df=session_df,
+            symbol=args.symbol,
+            account_equity=account_equity,
+            paper_config=config,
+            reversal_config=FailedBreakdownReversalConfig(),
             realized_daily_pnl=args.realized_daily_pnl,
         )
     else:
