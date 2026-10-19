@@ -14,7 +14,7 @@ on:
       strategies:
         description: Strategy lanes to scan, comma-separated
         required: true
-        default: ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R,POST_NEWS_BREAKOUT_RETEST_2R
+        default: ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R,POST_NEWS_BREAKOUT_RETEST_2R,FAILED_BREAKDOWN_REVERSAL_2R
       htf_symbols:
         description: HTF strategy symbols, comma-separated
         required: true
