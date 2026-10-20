@@ -137,6 +137,22 @@ async def stream_smoke(config, seconds):
         raise RuntimeError("Market-data stream authentication/subscription was not confirmed.")
 
 
+async def acquire_session_lease(journal, owner, shutdown, timeout=90):
+    deadline = time.monotonic() + timeout
+    while not shutdown.is_set():
+        if journal.acquire(owner, datetime.now(UTC)):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Another shadow worker still owns the database lease after the handover timeout.")
+        HEALTH.update(phase="WAITING_FOR_LEASE", heartbeat=time.monotonic())
+        try:
+            await asyncio.wait_for(shutdown.wait(), timeout=min(2, remaining))
+        except TimeoutError:
+            pass
+    return False
+
+
 async def run_session(config, journal, now, shutdown):
     from alpaca.data.enums import DataFeed
     from alpaca.data.live import StockDataStream
@@ -145,8 +161,9 @@ async def run_session(config, journal, now, shutdown):
 
     session = now.astimezone(ZoneInfo(NY)).date().isoformat()
     owner = uuid4().hex
-    if not journal.acquire(owner, now):
-        raise RuntimeError("Another shadow worker owns this database lease.")
+    if not await acquire_session_lease(journal, owner, shutdown):
+        return
+    now = datetime.now(UTC)
     HEALTH.update(phase="BOOTSTRAP", session=session, feed=config.feed,
                   config_hash=config.fingerprint, faulted=False)
     engine = ShadowEngine(config, journal, session, owner,
@@ -250,8 +267,10 @@ async def run_session(config, journal, now, shutdown):
         await ingest_history(history)
         engine.daily = {symbol: daily[daily["ticker"] == symbol].copy() if "ticker" in daily else pd.DataFrame()
                         for symbol in config.htf}
-        journal.event(session, "SESSION_START", {**configuration_report(config), "code_sha": engine.code_sha})
-        journal.enqueue(session, "start",
+        identity = {**configuration_report(config), "code_sha": engine.code_sha}
+        journal.event(session, "SESSION_START", identity)
+        LOG.info("Shadow worker identity %s", json.dumps(identity, sort_keys=True))
+        journal.enqueue(session, f"start:{engine.code_sha}",
             f"Shadow worker starting | {session}\nStream connection not yet confirmed. Broker submission disabled.\n"
             f"Feed: {config.feed} | {len(config.watchlist)} instruments | {len(config.lanes)} lanes\n"
             f"Entry cutoff: {config.last_entry} NY | monitoring cutoff: {config.cutoff} NY\n"
@@ -277,8 +296,9 @@ async def run_session(config, journal, now, shutdown):
             if stream._running:
                 if not was_connected:
                     journal.event(session, "STREAM_SUBSCRIPTION_CONFIRMED", {"symbols": config.subscriptions, "feed": config.feed})
-                    journal.enqueue(session, "stream_connected", f"Market-data subscription confirmed | {session}\n"
+                    journal.enqueue(session, f"stream_connected:{engine.code_sha}", f"Market-data subscription confirmed | {session}\n"
                         f"Feed: {config.feed} | {len(config.subscriptions)} symbols.\n"
+                        f"Code: {engine.code_sha}\n"
                         "Shadow only. Per-symbol data completeness and quote freshness are checked separately.")
                 was_connected = True
                 connection_deadline = time.monotonic() + 60

@@ -38,6 +38,9 @@ verified through that connector. No credentials were printed or copied.
 - The worker persists and logs telemetry and an end-of-session acceptance report.
   Missing data, lane exceptions, incomplete delivery, unresolved positions and
   schedule conflicts remain explicit. The report is operational evidence only.
+- During deployment the replacement worker waits up to 90 seconds for the shared
+  lease. It does not take ownership from an active worker. Startup/subscription
+  notifications include the deployed version and are deduplicated per version.
 - `scripts/check_shadow_session.py` audits existing storage with SELECT queries and
   acquires no worker lease. SQLite is opened read-only, and a missing database is
   never initialized. Exit codes: 0 PASS, 1 FAIL, 2 INCOMPLETE/UNAVAILABLE.
@@ -122,7 +125,7 @@ The stored AAPL 2024 experiments remain recorded, including failures:
 
 ## Verification and Remaining Work
 
-262 offline tests and 10 subtests passed; the opt-in PostgreSQL test was skipped
+264 offline tests and 10 subtests passed; the opt-in PostgreSQL test was skipped
 in that run and passed separately in its UUID-isolated schema. The integration
 check includes reading the acceptance report through PostgreSQL's JSON decoder.
 Focused checks cover read-only SQLite reporting, unavailable evidence, explicit

@@ -1,4 +1,6 @@
+import asyncio
 from datetime import timedelta
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -8,7 +10,7 @@ from realtime.acceptance import session_report
 from realtime.config import RuntimeConfig
 from realtime.journal import Journal
 from realtime.readiness import preparation_phase, strategy_readiness
-from realtime.service import configuration_report
+from realtime.service import acquire_session_lease, configuration_report
 from realtime.telemetry import RuntimeTelemetry
 from scripts import check_shadow_session
 
@@ -16,6 +18,30 @@ from scripts import check_shadow_session
 SESSION = "2026-10-19"
 NOW = pd.Timestamp(f"{SESSION} 10:16", tz="America/New_York")
 ORB = "ORB_RETEST_RECLAIM_BODY_2R"
+
+
+def test_deployment_handover_waits_for_lease_without_stealing_it(monkeypatch):
+    journal = Mock()
+    journal.acquire.side_effect = [False, True]
+
+    async def elapsed(awaitable, timeout):
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr("realtime.service.asyncio.wait_for", elapsed)
+    assert asyncio.run(acquire_session_lease(journal, "new", asyncio.Event()))
+    assert journal.acquire.call_count == 2
+    journal.release.assert_not_called()
+
+
+def test_handover_timeout_and_shutdown_never_take_ownership():
+    journal = Mock()
+    journal.acquire.return_value = False
+    with pytest.raises(RuntimeError, match="handover timeout"):
+        asyncio.run(acquire_session_lease(journal, "new", asyncio.Event(), timeout=0))
+    stop = asyncio.Event()
+    stop.set()
+    assert not asyncio.run(acquire_session_lease(journal, "new", stop))
 
 
 def test_latency_uses_bar_completion_and_separates_receive_from_queue_wait():
