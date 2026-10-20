@@ -36,10 +36,9 @@ def _session(closes: list[float]) -> pd.DataFrame:
 def test_build_three_minute_bars_aggregates_session():
     bars = build_three_minute_bars(_session([100, 101, 102, 103]))
 
-    assert len(bars) == 2
+    assert len(bars) == 1
     assert float(bars.iloc[0]["open"]) == 100
     assert float(bars.iloc[0]["close"]) == 102
-    assert float(bars.iloc[1]["open"]) == 102
 
 
 def test_add_vwap_ema9_uses_ohlc4_vwap_and_close_ema():

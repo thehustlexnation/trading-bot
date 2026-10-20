@@ -49,6 +49,8 @@ def calculate_target(direction: str, entry: float, stop: float, target_r: float)
 
 def main():
     args = parse_args()
+    if args.submit_paper:
+        raise SystemExit("PAPER_SUBMISSION_DISABLED: approved orders cannot bypass the shadow-only release.")
     target = (
         args.target
         if args.target is not None

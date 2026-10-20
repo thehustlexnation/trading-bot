@@ -1,0 +1,8 @@
+alpaca-py==0.44.0
+exchange-calendars==4.13.2
+numpy==1.26.4
+pandas==2.3.3
+psycopg2-binary==2.9.12
+python-dotenv==1.2.3
+requests==2.34.2
+SQLAlchemy==2.0.52

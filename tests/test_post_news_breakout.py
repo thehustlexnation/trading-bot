@@ -29,7 +29,7 @@ def post_news_fixture() -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "timestamp_ny": timestamp,
+                "timestamp_ny": timestamp + pd.Timedelta(minutes=minute),
                 "open": open_price,
                 "high": high,
                 "low": low,
@@ -37,6 +37,7 @@ def post_news_fixture() -> pd.DataFrame:
                 "volume": 1000,
             }
             for timestamp, (open_price, high, low, close) in zip(timestamps, rows)
+            for minute in range(3)
         ]
     )
 
