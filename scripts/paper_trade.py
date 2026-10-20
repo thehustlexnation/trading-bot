@@ -82,6 +82,17 @@ DEFAULT_HTF_SYMBOLS = (
     "JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ"
 )
 
+WAIT_REASONS = frozenset({
+    "SESSION_NOT_READY", "NO_SESSION_DATA", "OPENING_RANGE_INCOMPLETE",
+    "NO_VALID_SIGNAL", "INSUFFICIENT_BARS", "NO_BREAKOUT", "NO_RETEST",
+    "NO_CONFIRMATION", "NO_REVERSAL_CONFIRMATION", "NO_BREAKDOWN",
+    "NO_FAILED_BREAKDOWN_CONFIRMATION", "POST_NEWS_RANGE_NOT_READY",
+    "NO_POST_NEWS_BREAKOUT_RETEST", "NO_VWAP_PULLBACK_CONFIRMATION",
+    "NO_FOLLOW_THROUGH_CANDLE", "NO_FOLLOW_THROUGH_CONFIRMATION",
+    "NO_VWAP_EMA9_CROSS_CONFIRMATION", "NO_ENTRY_CANDLE",
+    "MARKET_CONTEXT_UNAVAILABLE", "MACRO_CONTEXT_UNAVAILABLE",
+})
+
 
 @dataclass
 class WatchedTrade:
@@ -1095,10 +1106,23 @@ def format_watched_trade_cutoff_result(
         return None, None
     plan = trade.plan
     df = session_df.sort_values("timestamp_ny")
+    if not df.empty:
+        cutoff_time = pd.Timestamp(datetime.combine(
+            pd.Timestamp(df.iloc[0]["timestamp_ny"]).date(), parse_ny_clock(cutoff), tzinfo=NY_TZ,
+        ))
+        df = df[df["timestamp_ny"] + pd.Timedelta(minutes=1) <= cutoff_time]
     if trade.signal_time is not None:
         df = df[df["timestamp_ny"] >= pd.Timestamp(trade.signal_time)]
     if df.empty:
         return None, None
+
+    # Finish evaluating the last completed bar before marking a cutoff exit.
+    for _ in range(2):
+        message, terminal, outcome = evaluate_watched_trade(trade, df)
+        if terminal:
+            return message, outcome
+        if message is None:
+            break
 
     last = df.iloc[-1]
     close = float(last["close"])
@@ -1177,11 +1201,11 @@ def filter_expected_session_minutes(df: pd.DataFrame, trading_date) -> tuple[pd.
     if trading_date == today_ny:
         current_minute = pd.Timestamp.now(tz=NY_TZ).floor("min")
         future_minutes = expected_minutes[
-            expected_minutes > current_minute
+            expected_minutes >= current_minute
         ]
         quality_timestamps = future_minutes
         expected_minutes = expected_minutes[
-            expected_minutes <= current_minute
+            expected_minutes < current_minute
         ]
 
     expected_set = set(expected_minutes)
@@ -1222,6 +1246,13 @@ def enrich_decision_with_market_context(args, trading_date, decision, session_df
     except Exception:
         return
 
+    reference = signal_reference_timestamp(decision.signal)
+    if reference is not None:
+        asof = pd.Timestamp(reference)
+        if asof.tzinfo is None:
+            asof = asof.tz_localize(NY_TZ)
+        session_df = session_df[session_df["timestamp_ny"] < asof]
+        benchmark_df = benchmark_df[benchmark_df["timestamp_ny"] < asof]
     context = build_relative_strength_context(
         symbol=args.symbol,
         position_side=decision.plan.position_side,
@@ -1233,12 +1264,37 @@ def enrich_decision_with_market_context(args, trading_date, decision, session_df
         decision.signal["relative_strength"] = context
 
 
+def final_policy_rejection(args, strategy, decision, macro_context, now=None):
+    if decision is None or not decision.approved or decision.plan is None:
+        return getattr(decision, "reason", "NO_VALID_SIGNAL")
+    if not macro_context or macro_context.get("status") not in {"clear", "high"}:
+        return "MACRO_CONTEXT_UNAVAILABLE"
+    macro_rejection = macro_news_rejection_reason(
+        macro_context, getattr(args, "allow_high_impact_news", False),
+    )
+    if macro_rejection:
+        return macro_rejection
+    signal = decision.signal or {}
+    if not signal.get("relative_strength"):
+        return "MARKET_CONTEXT_UNAVAILABLE"
+    if signal_quality_from_context(signal)[0] == "C":
+        return "LOW_QUALITY_C"
+    if is_signal_after_last_entry(signal, args.last_entry):
+        return "LATE_SIGNAL_AFTER_LAST_ENTRY"
+    if now is not None and now.astimezone(NY_TZ).time() >= parse_ny_clock(args.last_entry):
+        return "AFTER_LAST_ENTRY"
+    return (
+        market_direction_rejection_reason(strategy, decision.plan, signal)
+        or orb_relative_strength_rejection_reason(strategy, decision.plan, signal)
+    )
+
+
 def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -> tuple[str, object | None]:
-    dry_run = not args.submit
+    dry_run = bool(dry_run or not args.submit)
 
     trading_client = None
     account = None
-    if args.equity is None or args.submit:
+    if args.equity is None or not dry_run:
         trading_client = create_alpaca_paper_trading_client()
         account = get_account_snapshot(trading_client)
         account_equity = account.equity
@@ -1355,6 +1411,23 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
         session_df=session_df,
     )
 
+    rejection = final_policy_rejection(
+        args, strategy_version, decision,
+        getattr(args, "macro_risk_context", None) or build_macro_risk_context(
+            trading_date,
+            getattr(args, "macro_news_start", "08:00"),
+            getattr(args, "macro_news_end", "10:30"),
+        ),
+        datetime.now(tz=NY_TZ) if args.source == "live" else None,
+    )
+    if rejection:
+        record = decision_to_audit_record(
+            decision, args.symbol, trading_date, args.source, dry_run,
+        )
+        record.update(approved=False, reason=rejection)
+        append_audit_record(record)
+        return rejection, decision
+
     if args.submit:
         if trading_client is None:
             trading_client = create_alpaca_paper_trading_client()
@@ -1400,6 +1473,8 @@ def run_once(args, trading_date, config, dry_run: bool, strategy_version: str) -
 
 def main():
     args = parse_args()
+    if args.submit:
+        raise SystemExit("PAPER_SUBMISSION_DISABLED: run this release in shadow mode.")
     trading_date = trading_date_from_args(args.date)
     dry_run = not args.submit
     symbols = parse_symbols(args.symbol, args.symbols)
@@ -1467,6 +1542,7 @@ def main():
         start=args.macro_news_start,
         end=args.macro_news_end,
     )
+    args.macro_risk_context = macro_risk_context
 
     if not args.watch:
         reason, decision = run_once(
@@ -1525,7 +1601,7 @@ def main():
         datetime.now(tz=NY_TZ).time() <= cutoff
         and (active_lanes or any(not trade.closed for trade in watched_trades))
     ):
-        for symbol, strategy in list(active_lanes):
+        for symbol, strategy in sorted(active_lanes):
             if (
                 strategy == POST_NEWS_BREAKOUT_STRATEGY_VERSION
                 and macro_risk_context.get("status") != "high"
@@ -1629,17 +1705,7 @@ def main():
                 active_lanes.remove((symbol, strategy))
                 continue
 
-            non_terminal_reasons = {
-                "SESSION_NOT_READY",
-                "NO_VALID_SIGNAL",
-                "INSUFFICIENT_BARS",
-                "NO_VWAP_PULLBACK_CONFIRMATION",
-                "NO_FOLLOW_THROUGH_CANDLE",
-                "NO_FOLLOW_THROUGH_CONFIRMATION",
-                "NO_VWAP_EMA9_CROSS_CONFIRMATION",
-                "NO_ENTRY_CANDLE",
-            }
-            if reason not in non_terminal_reasons:
+            if reason not in WAIT_REASONS:
                 notify(
                     "Paper Trading Watch",
                     f"{symbol} stopped: {reason}",

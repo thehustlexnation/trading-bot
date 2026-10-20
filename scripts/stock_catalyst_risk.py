@@ -35,6 +35,9 @@ class CompanyNewsItem:
     headline: str
     source: str = ""
     url: str = ""
+    published_at: str = ""
+    first_seen_at: str = ""
+    verification: str = "provider-tagged; entity relevance unverified"
 
 
 def _group_by_symbol(items) -> dict[str, list]:
@@ -62,7 +65,10 @@ def fetch_json(url: str, timeout: int = 15):
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
-        return json.loads(response.read().decode(charset, errors="replace"))
+        payload = json.loads(response.read().decode(charset, errors="replace"))
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError("News provider returned an error response.")
+        return payload
 
 
 def finnhub_url(path: str, params: dict[str, str]) -> str:
@@ -93,16 +99,29 @@ def parse_company_news_payload(payload, symbol: str, max_items: int = 3) -> list
     if not isinstance(payload, list):
         return []
     news = []
+    seen = set()
     for row in payload:
         headline = str(row.get("headline") or "").strip()
         if not headline:
             continue
+        identity = str(row.get("url") or headline).strip().lower()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        published_at = ""
+        if row.get("datetime"):
+            try:
+                published_at = datetime.fromtimestamp(float(row["datetime"]), tz=ZoneInfo("UTC")).isoformat()
+            except (TypeError, ValueError, OverflowError, OSError):
+                pass
         news.append(
             CompanyNewsItem(
                 symbol=symbol,
                 headline=headline,
                 source=str(row.get("source") or "").strip(),
                 url=str(row.get("url") or "").strip(),
+                published_at=published_at,
+                first_seen_at=(datetime.now(tz=ZoneInfo("UTC")).isoformat() if published_at else ""),
             )
         )
         if len(news) >= max_items:
@@ -293,7 +312,7 @@ def main():
         except Exception as exc:
             message = (
                 "Stock catalyst risk check\n\n"
-                f"Could not load Finnhub catalyst data: {type(exc).__name__}: {exc}\n"
+                f"Could not load Finnhub catalyst data: {type(exc).__name__}\n"
                 "Trading bot will still run, but there is no stock-specific catalyst context."
             )
         else:

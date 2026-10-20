@@ -58,6 +58,8 @@ def find_failed_breakdown_reversal_signal(
         close = float(candle["close"])
         if close <= or_low or close <= float(candle["session_vwap"]) or close <= float(candle["ema9"]):
             continue
+        if index + 1 >= len(df):
+            return None, "NO_ENTRY_CANDLE"
         entry = df.iloc[index + 1]
         return {
             "strategy_version": STRATEGY_VERSION,

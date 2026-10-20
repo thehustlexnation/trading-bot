@@ -38,14 +38,19 @@ def build_three_minute_bars(session_df: pd.DataFrame, timeframe: str = "3min") -
         raise ValueError("session_df must include timestamp_ny.")
 
     df = session_df.copy().sort_values("timestamp_ny")
+    if df["timestamp_ny"].duplicated().any():
+        raise ValueError("Duplicate minute observations cannot form a complete bar.")
+    entry_rows = df[df.get("entry_only", pd.Series(False, index=df.index)).fillna(False)]
+    df = df.drop(index=entry_rows.index)
     indexed = df.set_index(pd.DatetimeIndex(df["timestamp_ny"]))
-    bars = indexed.resample(
+    grouped = indexed.resample(
         timeframe,
         label="left",
         closed="left",
         origin="start_day",
         offset="9h30min",
-    ).agg(
+    )
+    bars = grouped.agg(
         {
             "open": "first",
             "high": "max",
@@ -54,8 +59,22 @@ def build_three_minute_bars(session_df: pd.DataFrame, timeframe: str = "3min") -
             "volume": "sum",
         }
     )
+    expected_count = int(pd.Timedelta(timeframe) / pd.Timedelta(minutes=1))
+    if expected_count < 1:
+        raise ValueError("Bar timeframe must be at least one minute.")
+    bars = bars[grouped["close"].count() == expected_count]
     bars = bars.dropna(subset=["open", "high", "low", "close"]).reset_index()
     bars = bars.rename(columns={"index": "timestamp_ny"})
+    # A quote observation supplies only the next entry reference, never a signal bar.
+    for _, entry in entry_rows.iterrows():
+        stamp = pd.Timestamp(entry["timestamp_ny"])
+        anchor = stamp.normalize() + pd.Timedelta(hours=9, minutes=30)
+        if (stamp - anchor) % pd.Timedelta(timeframe) == pd.Timedelta(0):
+            bars = pd.concat([bars, pd.DataFrame([{
+                "timestamp_ny": stamp,
+                "open": entry["open"], "high": entry["open"],
+                "low": entry["open"], "close": entry["open"], "volume": 0,
+            }])], ignore_index=True)
     return bars
 
 

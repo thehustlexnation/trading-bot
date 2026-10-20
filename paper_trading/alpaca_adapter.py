@@ -84,12 +84,7 @@ def submit_bracket_order(
             broker_order=None,
         )
 
-    order_request = build_alpaca_market_order_request(plan)
-    broker_order = trading_client.submit_order(order_request)
-
-    return SubmittedOrderResult(
-        submitted=True,
-        dry_run=False,
-        payload=payload,
-        broker_order=broker_order,
+    raise RuntimeError(
+        "PAPER_SUBMISSION_DISABLED: this release supports shadow evaluation only; "
+        "broker-backed exits, reconciliation and recovery must be validated first."
     )

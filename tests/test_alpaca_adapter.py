@@ -93,16 +93,9 @@ def test_submit_bracket_order_dry_run_does_not_call_broker():
     assert client.submitted == []
 
 
-def test_submit_bracket_order_live_calls_broker():
+def test_submit_bracket_order_submission_is_disabled_until_lifecycle_is_validated():
     client = FakeTradingClient()
 
-    result = submit_bracket_order(
-        trading_client=client,
-        plan=_long_plan(),
-        dry_run=False,
-    )
-
-    assert result.submitted
-    assert not result.dry_run
-    assert result.broker_order == {"id": "order-1"}
-    assert len(client.submitted) == 1
+    with pytest.raises(RuntimeError, match="PAPER_SUBMISSION_DISABLED"):
+        submit_bracket_order(trading_client=client, plan=_long_plan(), dry_run=False)
+    assert client.submitted == []

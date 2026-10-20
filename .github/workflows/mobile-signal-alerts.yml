@@ -14,7 +14,7 @@ on:
       strategies:
         description: Strategy lanes to scan, comma-separated
         required: true
-        default: ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R,POST_NEWS_BREAKOUT_RETEST_2R,FAILED_BREAKDOWN_REVERSAL_2R
+        default: ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R
       htf_symbols:
         description: HTF strategy symbols, comma-separated
         required: true
@@ -28,7 +28,7 @@ on:
         required: false
         default: "10:30"
       submit_paper:
-        description: Type true to auto-submit qualifying Alpaca paper trades. Anything else is alerts only.
+        description: Submission is disabled in this release. Keep false for research alerts.
         required: false
         default: "false"
 
@@ -95,7 +95,7 @@ jobs:
           CUTOFF="${{ github.event.inputs.cutoff || '10:15' }}"
           NEWS_START="${{ github.event.inputs.news_start || '08:00' }}"
           NEWS_END="${{ github.event.inputs.news_end || '10:30' }}"
-          STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R,POST_NEWS_BREAKOUT_RETEST_2R' }}"
+          STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R' }}"
           HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
           SUBMIT_ARGS=""
           if [ "${{ github.event.inputs.submit_paper || 'false' }}" = "true" ]; then
