@@ -2,6 +2,8 @@
 
 Checked 2026-10-20. This records completed work and remaining evidence for the
 [streaming release](REALTIME_SHADOW_RELEASE.md). It does not activate broker orders.
+The subsequent [production verification](PRODUCTION_DEPLOYMENT_2026-10-20.md)
+records the authorized rollout and real post-deployment Slack result delivery.
 
 ## Hosted Evidence
 

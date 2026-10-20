@@ -9,6 +9,8 @@ in [the shadow release notes](REALTIME_SHADOW_RELEASE.md). The sections below re
 the original proposal; research promotion and hosted acceptance are not complete.
 The [October 20 checkpoint](SHADOW_ACCEPTANCE_2026-10-20.md) records actual Railway
 and Slack verification, baseline reconciliation and the next reporting changes.
+The [production verification](PRODUCTION_DEPLOYMENT_2026-10-20.md) records the
+subsequent deployed SHA, passing hosted CI and observed Slack trade results.
 
 Status: researched design and implementation backlog, not an implemented trading
 release, profitability certification, or verified Railway deployment. No orders,
