@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from realtime.config import RuntimeConfig
+from realtime.acceptance import session_report
 from realtime.journal import Journal
 
 
@@ -41,6 +42,18 @@ def test_postgres_schema_lease_reservation_and_recovery():
         assert second.shadow_positions("2026-10-19")[0]["symbol"] == "AAPL"
         first.close_shadow("2026-10-19", "AAPL", 102, "TARGET", now)
         assert second.shadow_positions("2026-10-19")[0]["pnl"] == 50
+        first.event("2026-10-19", "SESSION_START", {
+            "code_sha": "integration-sha", "config_hash": "test", "broker_submission": "DISABLED",
+        })
+        reader = create_engine(url, connect_args={"options": f"-c search_path={schema}"})
+        try:
+            report = session_report(reader, "2026-10-19", now, "integration-sha")
+            assert report["status"] == "INCOMPLETE"
+            assert report["code_sha"] == "integration-sha"
+            assert next(row for row in report["gates"] if row["name"] == "release_identity")["status"] == "PASS"
+            assert not report["source_errors"]["BACKFILL_ERROR"]
+        finally:
+            reader.dispose()
     finally:
         for journal in journals:
             journal.engine.dispose()

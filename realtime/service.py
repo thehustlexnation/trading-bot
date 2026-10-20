@@ -14,12 +14,15 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from dotenv import load_dotenv
 
+from realtime.acceptance import session_report
 from realtime.config import RuntimeConfig, clock
 from realtime.engine import ShadowEngine
 from realtime.journal import Journal
 from realtime.market import NY
 from realtime.network import BoundedHTTPAdapter
 from realtime.preparation import build_dossier, collect_catalysts, format_preparation, prepare_history
+from realtime.readiness import preparation_phase, strategy_readiness
+from realtime.telemetry import RuntimeTelemetry
 
 UTC = timezone.utc
 LOG = logging.getLogger("realtime")
@@ -43,6 +46,7 @@ def configuration_report(config):
         "policy": config.policy_version, "config_hash": config.fingerprint,
         "feed": config.feed, "watchlist": config.watchlist,
         "subscriptions": config.subscriptions, "lane_count": len(config.lanes),
+        "lanes": config.lanes, "strategy_readiness": strategy_readiness(config),
         "preparation_start_ny": config.preparation_start, "watch_start_ny": config.watch_start,
         "last_entry_ny": config.last_entry, "cutoff_ny": config.cutoff,
         "storage": "PostgreSQL" if database_url().startswith("postgres") else "local SQLite",
@@ -50,7 +54,8 @@ def configuration_report(config):
         "slack_configured": bool(os.getenv("SLACK_WEBHOOK_URL")),
         "finnhub_configured": bool(os.getenv("FINNHUB_API_KEY")),
         "sec_configured": bool(os.getenv("SEC_USER_AGENT")),
-        "warnings": ["EMA9's current completed-bar warmup overlaps the 10:00 entry deadline; no rule or deadline was silently relaxed."],
+        "warnings": [f"{strategy}: warmup leaves no entry window before {config.last_entry} NY."
+                     for strategy, row in strategy_readiness(config).items() if row["status"] == "NO_ENTRY_WINDOW"],
     }
 
 
@@ -148,6 +153,7 @@ async def run_session(config, journal, now, shutdown):
         code_sha=os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GITHUB_SHA", "local")),
         now_fn=lambda: datetime.now(UTC))
     queue = asyncio.Queue(maxsize=10000)
+    telemetry = RuntimeTelemetry()
     stream = None
     stream_task = None
     tasks = []
@@ -217,6 +223,9 @@ async def run_session(config, journal, now, shutdown):
     async def bar(message):
         await enqueue("bar", message)
 
+    async def revised_bar(message):
+        await enqueue("bar_revision", message)
+
     async def quote(message):
         await enqueue("quote", message)
 
@@ -224,10 +233,12 @@ async def run_session(config, journal, now, shutdown):
         while not shutdown.is_set():
             kind, message, received = await queue.get()
             try:
-                if kind == "bar":
+                processed, depth = datetime.now(UTC), queue.qsize() + 1
+                if kind in {"bar", "bar_revision"}:
                     engine.ingest_bar(message, received)
                 else:
                     engine.ingest_quote(message, received)
+                telemetry.market_event(kind, message, received, processed, depth)
             except ValueError:
                 journal.event(session, "INVALID_MARKET_EVENT", {"kind": kind, "symbol": message.get("symbol")})
             finally:
@@ -247,7 +258,7 @@ async def run_session(config, journal, now, shutdown):
             f"Code: {engine.code_sha} | config: {config.fingerprint}")
         stream = StockDataStream(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], feed=DataFeed(config.feed))
         stream.subscribe_bars(bar, *config.subscriptions)
-        stream.subscribe_updated_bars(bar, *config.subscriptions)
+        stream.subscribe_updated_bars(revised_bar, *config.subscriptions)
         stream.subscribe_quotes(quote, *config.subscriptions)
         stream_task = asyncio.create_task(stream._run_forever())
         tasks.extend([asyncio.create_task(consume()), asyncio.create_task(context_refresh()),
@@ -255,7 +266,8 @@ async def run_session(config, journal, now, shutdown):
         HEALTH["phase"] = "STREAM_CONNECTING"
         connection_deadline = time.monotonic() + 45
         was_connected = False
-        last_backfill, last_preparation = time.monotonic(), 0
+        last_backfill, last_preparation, last_telemetry = time.monotonic(), 0, time.monotonic()
+        last_preparation_phase = None
         while not shutdown.is_set():
             current = datetime.now(UTC)
             if lost_lease.is_set() or any(task.done() for task in tasks):
@@ -282,14 +294,23 @@ async def run_session(config, journal, now, shutdown):
                 except Exception as exc:
                     journal.event(session, "BACKFILL_ERROR", {"error_type": type(exc).__name__, "at": current})
                 last_backfill = time.monotonic()
-            if time.monotonic() - last_preparation >= 300:
-                journal.enqueue(session, "preparation", format_preparation(save_preparation(), config.feed))
+            phase = preparation_phase(pd.Timestamp(current), config)
+            if phase != last_preparation_phase or time.monotonic() - last_preparation >= 300:
+                journal.enqueue(session, f"preparation:{phase}", format_preparation(save_preparation(), config.feed, phase))
                 last_preparation = time.monotonic()
+                last_preparation_phase = phase
             if bool(stream._running) and queue.empty():
                 started = time.monotonic()
                 engine.tick(datetime.now(UTC))
+                telemetry.observe("evaluation_seconds", time.monotonic() - started)
                 HEALTH.update(last_tick_seconds=time.monotonic() - started,
                               open_shadow_positions=len(engine.positions), queued_events=queue.qsize())
+            if time.monotonic() - last_telemetry >= 60:
+                snapshot = telemetry.snapshot(datetime.now(UTC))
+                journal.event(session, "RUNTIME_TELEMETRY", snapshot)
+                LOG.info("Shadow telemetry %s", json.dumps(snapshot, sort_keys=True))
+                telemetry.reset()
+                last_telemetry = time.monotonic()
             current = datetime.now(UTC)
             cutoff = datetime.combine(current.astimezone(ZoneInfo(NY)).date(), clock(config.cutoff), ZoneInfo(NY))
             if current >= cutoff.astimezone(UTC):
@@ -300,10 +321,17 @@ async def run_session(config, journal, now, shutdown):
                     raise RuntimeError("Shadow cutoff has no fresh quote; journal remains OPEN, not falsely closed.")
             await asyncio.sleep(1)
         recap = engine.recap()
+        journal.event(session, "RUNTIME_TELEMETRY", telemetry.snapshot(datetime.now(UTC)))
         journal.event(session, "SESSION_RECAP", {"text": recap})
         journal.enqueue(session, "recap", recap)
         print(recap, flush=True)
         await asyncio.sleep(6)
+        try:
+            report = session_report(journal.engine, session, datetime.now(UTC), engine.code_sha)
+            journal.event(session, "SESSION_ACCEPTANCE", report)
+            LOG.info("Shadow acceptance %s", json.dumps(report, sort_keys=True))
+        except Exception as exc:
+            LOG.error("Session acceptance report unavailable: %s", type(exc).__name__)
     except Exception as exc:
         engine.stopped = True
         try:
