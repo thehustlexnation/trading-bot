@@ -117,7 +117,7 @@ def complete_journal(tmp_path, monkeypatch):
     journal.event(SESSION, "PREPARATION", {"symbol": "AAPL", "asof": stamp,
                                           "prior_close": 100, "pdh": 101, "pdl": 99})
     journal.event(SESSION, "DECISION", {"symbol": "AAPL", "strategy": ORB, "reason": "NO_RETEST"})
-    journal.event(SESSION, "SESSION_RECAP", {"text": "completed"})
+    journal.event(SESSION, "SESSION_RECAP", {"text": "completed", "code_sha": "reviewed-sha", "asof": NOW})
     journal.enqueue(SESSION, "recap", "completed")
     journal.mark_delivered(journal.pending_notifications()[0]["id"])
     return journal
@@ -140,6 +140,20 @@ def test_older_worker_cannot_pass_without_latency_or_lane_evidence(tmp_path):
     assert report["status"] == "INCOMPLETE"
     statuses = {row["name"]: row["status"] for row in report["gates"]}
     assert statuses["latency_evidence"] == statuses["lane_inventory"] == "UNVERIFIED"
+
+
+def test_early_or_previous_release_recap_does_not_complete_new_session(tmp_path, monkeypatch):
+    journal = complete_journal(tmp_path, monkeypatch)
+    from sqlalchemy import delete
+
+    with journal.engine.begin() as connection:
+        connection.execute(delete(journal.events).where(journal.events.c.kind == "SESSION_RECAP"))
+    journal.event(SESSION, "SESSION_RECAP", {"text": "early", "code_sha": "reviewed-sha",
+                                           "asof": NOW.replace(hour=9, minute=45)})
+    journal.event(SESSION, "SESSION_RECAP", {"text": "old", "code_sha": "previous-release", "asof": NOW})
+    report = session_report(journal.engine, SESSION, NOW)
+    assert report["status"] == "INCOMPLETE"
+    assert next(row for row in report["gates"] if row["name"] == "completion")["status"] == "UNVERIFIED"
 
 
 def test_report_command_does_not_create_missing_sqlite_database(tmp_path, monkeypatch, capsys):

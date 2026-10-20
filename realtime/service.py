@@ -341,9 +341,13 @@ async def run_session(config, journal, now, shutdown):
                     raise RuntimeError("Shadow cutoff has no fresh quote; journal remains OPEN, not falsely closed.")
             await asyncio.sleep(1)
         recap = engine.recap()
+        interrupted = shutdown.is_set()
+        if interrupted:
+            recap = recap.replace("Streaming shadow recap", "Streaming shadow checkpoint (worker interrupted)", 1)
         journal.event(session, "RUNTIME_TELEMETRY", telemetry.snapshot(datetime.now(UTC)))
-        journal.event(session, "SESSION_RECAP", {"text": recap})
-        journal.enqueue(session, "recap", recap)
+        journal.event(session, "SESSION_INTERRUPTED" if interrupted else "SESSION_RECAP",
+                      {"text": recap, "code_sha": engine.code_sha, "asof": datetime.now(UTC)})
+        journal.enqueue(session, f"checkpoint:{owner}" if interrupted else f"recap:{engine.code_sha}", recap)
         print(recap, flush=True)
         await asyncio.sleep(6)
         try:

@@ -41,6 +41,8 @@ verified through that connector. No credentials were printed or copied.
 - During deployment the replacement worker waits up to 90 seconds for the shared
   lease. It does not take ownership from an active worker. Startup/subscription
   notifications include the deployed version and are deduplicated per version.
+  Interrupted runs record checkpoints; a final recap must come from the current
+  release at/after cutoff. A previous worker's message cannot complete acceptance.
 - `scripts/check_shadow_session.py` audits existing storage with SELECT queries and
   acquires no worker lease. SQLite is opened read-only, and a missing database is
   never initialized. Exit codes: 0 PASS, 1 FAIL, 2 INCOMPLETE/UNAVAILABLE.
@@ -125,7 +127,7 @@ The stored AAPL 2024 experiments remain recorded, including failures:
 
 ## Verification and Remaining Work
 
-264 offline tests and 10 subtests passed; the opt-in PostgreSQL test was skipped
+265 offline tests and 10 subtests passed; the opt-in PostgreSQL test was skipped
 in that run and passed separately in its UUID-isolated schema. The integration
 check includes reading the acceptance report through PostgreSQL's JSON decoder.
 Focused checks cover read-only SQLite reporting, unavailable evidence, explicit

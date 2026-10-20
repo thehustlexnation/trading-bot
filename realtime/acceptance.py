@@ -100,7 +100,8 @@ def session_report(database, session, now, expected_sha=None):
         failures["LANE_ERROR"] = sum(row["reason"] == "LANE_ERROR" for row in decisions)
     gate("session_failures", "FAIL" if failures else "PASS", failures)
     open_symbols = [row["symbol"] for row in positions if row["state"] == "OPEN"]
-    completed = bool(grouped["SESSION_RECAP"])
+    completed = any(row.get("code_sha") == config.get("code_sha") and row.get("asof")
+                    and cutoff <= aware_timestamp(row["asof"]) <= now for row in grouped["SESSION_RECAP"])
     gate("completion", "FAIL" if completed and open_symbols else "PASS" if completed else "UNVERIFIED",
          {"recap_recorded": completed, "open_shadow_positions": open_symbols})
     pending = sum(state != "DELIVERED" for state in notifications)
