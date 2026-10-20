@@ -32,6 +32,25 @@ not prove that the provider reported a malformed quote or that every venue's pri
 stayed above the stop. It does corroborate the simulation's use of the unusually
 wide bid, rather than a confirmed traded-price stop execution.
 
+## Confirmed Stored Record
+
+At 14:07:53 UTC the replacement production worker logged the existing PostgreSQL
+record through the sanitized startup audit. This independently confirms the
+as-received quote retained by the original worker:
+
+- Entry: 406.45, six shares; quote timestamp 13:36:21.221648 UTC.
+- Exact stop: 403.42608; planned dollar risk: 18.143519999999853.
+- Exit quote: bid 393.76, ask 406.09, timestamp 13:37:43.346225 UTC,
+  received 13:37:43.356991 UTC; spread 308.307807713946 bps.
+- Observed P/L: -76.13999999999999; calculated R: -4.196539590994504.
+- Entry release: `b3b410b4df58ea5b28fe5a18e0f71893f822c17d`.
+- The stored path was already unverified. The older worker did not retain the
+  previous/next quote timestamps needed to reconstruct the intervening gap, so the
+  audit labels that evidence `LEGACY_UNVERIFIED_PATH` instead of inventing it.
+
+The saved quote matches the later historical response exactly. No stored trade or
+previous Slack message was rewritten, and no broker order was placed.
+
 ## Code Finding and Follow-Up
 
 Entry checks enforce `max_spread_bps` (20 bps under the defaults). Exit marking
@@ -64,3 +83,14 @@ separately in a temporary UUID schema, including persisted gap diagnostics and
 trade-audit decoding. Regression tests reproduce an uncapped -4.20R wide-quote
 observation, exclude it from verified totals, preserve a normal tight-spread -1R
 stop mark, retain gap timestamps and keep affected acceptance reports incomplete.
+
+## Production Follow-Up
+
+Commit `582b642c8c04b2404b9be7c06bcd95a0ff55fc2a` passed
+[hosted tests, configuration checks and Docker build](https://github.com/thehustlexnation/trading-bot/actions/runs/39435817975).
+Railway deployment `4fcbac61-a701-4354-95d8-df615fc6de1d` built successfully and
+started for the remaining session. The
+[startup](https://thehustlex.slack.com/archives/C0C62C6DMU7/p1792505274040359) and
+[22-symbol acknowledgement](https://thehustlex.slack.com/archives/C0C62C6DMU7/p1792505279106259)
+identify this exact release. Broker submission remains disabled. Only the existing
+worker's source commit pin changed; secrets, schedule and risk parameters did not.
