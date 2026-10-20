@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from realtime.acceptance import session_report
 from realtime.config import RuntimeConfig, clock
+from realtime.diagnostics import trade_diagnostics
 from realtime.engine import ShadowEngine
 from realtime.journal import Journal
 from realtime.market import NY
@@ -211,7 +212,9 @@ async def run_session(config, journal, now, shutdown):
         while not shutdown.is_set():
             try:
                 catalysts = await asyncio.to_thread(collect_catalysts, config.watchlist, datetime.now(UTC), stop_event=source_stop)
-                save_preparation()
+                dossiers = save_preparation()
+                phase = preparation_phase(pd.Timestamp.now(tz="UTC"), config)
+                journal.enqueue(session, f"preparation:{phase}:sources", format_preparation(dossiers, config.feed, phase))
             except Exception as exc:
                 journal.event(session, "PREPARATION_SOURCE_ERROR", {"error_type": type(exc).__name__})
             await asyncio.sleep(600)
@@ -270,6 +273,8 @@ async def run_session(config, journal, now, shutdown):
         identity = {**configuration_report(config), "code_sha": engine.code_sha}
         journal.event(session, "SESSION_START", identity)
         LOG.info("Shadow worker identity %s", json.dumps(identity, sort_keys=True))
+        for row in journal.shadow_positions(session):
+            LOG.info("Shadow trade audit %s", json.dumps(trade_diagnostics(row["payload"]), sort_keys=True))
         journal.enqueue(session, f"start:{engine.code_sha}",
             f"Shadow worker starting | {session}\nStream connection not yet confirmed. Broker submission disabled.\n"
             f"Feed: {config.feed} | {len(config.watchlist)} instruments | {len(config.lanes)} lanes\n"

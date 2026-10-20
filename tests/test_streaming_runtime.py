@@ -191,6 +191,7 @@ def test_restart_preserves_claim_and_shadow_position(tmp_path):
     restored = ShadowEngine(engine.config, Journal(f"sqlite:///{tmp_path}/state.sqlite3"), SESSION, "owner")
     assert "AAPL" in restored.positions
     assert restored.positions["AAPL"]["path_gap"]
+    assert "WORKER_RESTART" in restored.positions["AAPL"]["unverified_reasons"]
     assert restored.evaluate_lane("AAPL", ORB, NOW) == "SYMBOL_ALREADY_EVALUATED"
 
 
@@ -205,6 +206,56 @@ def test_quote_exit_and_replay_are_idempotent(tmp_path):
     assert row["state"] == "CLOSED"
     assert row["payload"]["r_multiple"] == pytest.approx(2)
     assert engine.close("AAPL", target, "TARGET", later) is None
+
+
+def test_wide_exit_quote_is_unverified_and_preserves_observed_loss(tmp_path):
+    from realtime.journal import exit_message
+    from realtime.diagnostics import trade_diagnostics
+
+    engine = make_engine(tmp_path)
+    assert engine.evaluate_lane("AAPL", ORB, NOW) == "APPROVED_SHADOW"
+    position = engine.positions["AAPL"]
+    risk_per_share = position["entry"] - position["stop"]
+    later = NOW + timedelta(seconds=2)
+    engine.ingest_quote(quote(now=later, bid=position["entry"] - 4.2 * risk_per_share,
+                             ask=position["entry"] + 0.02), later)
+    payload = engine.journal.shadow_positions(SESSION)[0]["payload"]
+    assert payload["r_multiple"] == pytest.approx(-4.2)
+    assert payload["path_gap"]
+    assert "EXIT_SPREAD_LIMIT" in payload["unverified_reasons"]
+    assert payload["unverified_reasons"]["EXIT_SPREAD_LIMIT"]["quote"]["bid"] == payload["exit"]
+    assert "UNVERIFIED SHADOW OBSERVATION" in exit_message(payload)
+    assert "planned stop" in exit_message(payload)
+    assert "closed P/L before fees: $+0.00" in engine.recap()
+    audit = trade_diagnostics(payload)
+    assert not audit["verified_path"] and audit["r_calculated_from_record"] == pytest.approx(-4.2)
+    assert audit["exit_spread_bps"] > engine.config.max_spread_bps
+
+
+def test_quote_gap_retains_the_last_observations_and_elapsed_time(tmp_path):
+    engine = make_engine(tmp_path)
+    assert engine.evaluate_lane("AAPL", ORB, NOW) == "APPROVED_SHADOW"
+    later = NOW + timedelta(seconds=20)
+    engine.ingest_quote(quote(now=later), later)
+    payload = engine.journal.shadow_positions(SESSION)[0]["payload"]
+    detail = payload["unverified_reasons"]["QUOTE_OBSERVATION_GAP"]
+    assert detail["gap_seconds"] == 20
+    assert pd.Timestamp(detail["previous_quote"]["timestamp"]) == NOW
+    assert pd.Timestamp(detail["next_quote"]["timestamp"]) == later
+
+
+def test_tight_fresh_stop_quote_remains_a_verified_shadow_mark(tmp_path):
+    from realtime.journal import exit_message
+
+    engine = make_engine(tmp_path)
+    assert engine.evaluate_lane("AAPL", ORB, NOW) == "APPROVED_SHADOW"
+    stop = engine.positions["AAPL"]["stop"]
+    later = NOW + timedelta(seconds=2)
+    engine.ingest_quote(quote(now=later, bid=stop, ask=stop + 0.02), later)
+    payload = engine.journal.shadow_positions(SESSION)[0]["payload"]
+    assert payload["r_multiple"] == pytest.approx(-1)
+    assert not payload.get("path_gap")
+    assert exit_message(payload).startswith("SHADOW RESULT")
 
 
 def test_cutoff_does_not_falsely_close_without_current_quote(tmp_path):

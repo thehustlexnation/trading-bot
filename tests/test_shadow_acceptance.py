@@ -165,6 +165,22 @@ def test_report_command_does_not_create_missing_sqlite_database(tmp_path, monkey
     assert not path.exists()
 
 
+def test_session_report_exposes_legacy_trade_evidence_and_cannot_verify_gap(tmp_path, monkeypatch):
+    journal = complete_journal(tmp_path, monkeypatch)
+    entry_time = NOW.replace(hour=9, minute=37)
+    journal.acquire("owner", entry_time)
+    payload = {"symbol": "AAPL", "side": "long", "entry": 100, "entry_time": entry_time,
+               "stop": 99, "target": 102, "quantity": 25, "risk": 25, "notional": 2500}
+    assert journal.open_shadow(SESSION, "AAPL", "g", payload, RuntimeConfig(), "owner", entry_time) == "APPROVED"
+    journal.mark_path_gap(SESSION, "AAPL")
+    journal.close_shadow(SESSION, "AAPL", 95.8, "STOP", entry_time)
+    report = session_report(journal.engine, SESSION, NOW)
+    assert report["status"] == "INCOMPLETE"
+    trade = report["trade_audits"][0]
+    assert trade["r_calculated_from_record"] == pytest.approx(-4.2)
+    assert trade["observed_exit"] == 95.8 and not trade["verified_path"]
+
+
 def test_report_command_can_open_existing_sqlite_in_read_only_mode(tmp_path, monkeypatch, capsys):
     path = tmp_path / "existing.sqlite3"
     journal = Journal(f"sqlite:///{path}")

@@ -5,6 +5,7 @@ import json
 import pandas as pd
 from sqlalchemy import text
 
+from realtime.diagnostics import trade_diagnostics
 from realtime.market import NY, aware_timestamp
 from strategy.market_calendar import get_expected_regular_session_minutes
 
@@ -100,6 +101,11 @@ def session_report(database, session, now, expected_sha=None):
         failures["LANE_ERROR"] = sum(row["reason"] == "LANE_ERROR" for row in decisions)
     gate("session_failures", "FAIL" if failures else "PASS", failures)
     open_symbols = [row["symbol"] for row in positions if row["state"] == "OPEN"]
+    trade_audits = [trade_diagnostics(json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"])
+                    for row in positions]
+    unverified_symbols = [row["symbol"] for row in trade_audits if not row["verified_path"]]
+    gate("verified_trade_paths", "UNVERIFIED" if unverified_symbols else "PASS",
+         {"unverified_symbols": unverified_symbols, "scope": "Observed marks are not broker fills."})
     completed = any(row.get("code_sha") == config.get("code_sha") and row.get("asof")
                     and cutoff <= aware_timestamp(row["asof"]) <= now for row in grouped["SESSION_RECAP"])
     gate("completion", "FAIL" if completed and open_symbols else "PASS" if completed else "UNVERIFIED",
@@ -111,6 +117,7 @@ def session_report(database, session, now, expected_sha=None):
     gate("preparation_inventory", "PASS" if symbols and set(symbols) <= set(latest_preparation) else "UNVERIFIED",
          {"configured": len(symbols), "recorded": len(latest_preparation)})
     preparation = {symbol: {"asof": row["asof"], "catalyst_status": row.get("catalysts", {}).get("status"),
+        "catalyst_reason": row.get("catalysts", {}).get("reason"),
         "missing_price_fields": [name for name in ("prior_close", "pdh", "pdl", "premarket_high", "premarket_low")
                                  if row.get(name) is None]} for symbol, row in latest_preparation.items()}
     missing_levels = {symbol: [name for name in ("prior_close", "pdh", "pdl")
@@ -123,6 +130,7 @@ def session_report(database, session, now, expected_sha=None):
             "code_sha": config.get("code_sha"), "config_hash": config.get("config_hash"),
             "feed": config.get("feed"), "gates": gates, "preparation": preparation,
             "decision_reasons": dict(Counter(row["reason"] for row in decisions)),
+            "trade_audits": trade_audits,
             "latest_latency_window": active_telemetry[-1] if active_telemetry else None,
             "source_errors": {name: len(grouped[name]) for name in ("BACKFILL_ERROR", "PREPARATION_SOURCE_ERROR")},
             "scope": "shadow runtime evidence only; no strategy promotion or broker lifecycle certification"}
