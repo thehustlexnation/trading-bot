@@ -54,9 +54,9 @@ def make_engine(tmp_path, symbol="AAPL", now=NOW):
 def test_default_inventory_and_sanitized_configuration(monkeypatch):
     monkeypatch.delenv("RAILWAY_ENVIRONMENT_ID", raising=False)
     config = RuntimeConfig()
-    assert len(config.watchlist) == 20
-    assert len(config.subscriptions) == 22
-    assert len(config.lanes) == 34
+    assert config.watchlist == ("NVDA", "AAPL", "META", "GOOGL", "TQQQ", "AMD", "AVGO", "SNDK", "INTC", "TSLA")
+    assert len(config.subscriptions) == 13
+    assert len(config.lanes) == 30
     assert config.fingerprint == RuntimeConfig().fingerprint
     report = configuration_report(config)
     assert report["broker_submission"] == "DISABLED"
@@ -322,7 +322,7 @@ def test_preparation_covers_every_instrument_with_unknowns():
     empty = prepare_history(pd.DataFrame())
     config = RuntimeConfig()
     dossiers = [build_dossier(symbol, empty, empty, NOW) for symbol in config.watchlist]
-    assert len(dossiers) == 20
+    assert len(dossiers) == 10
     assert all(row["catalysts"]["status"] == "UNKNOWN" for row in dossiers)
     output = format_preparation(dossiers, "iex")
     assert all(symbol in output for symbol in config.watchlist)

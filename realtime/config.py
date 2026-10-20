@@ -7,8 +7,9 @@ import os
 import re
 
 
-INTRADAY_SYMBOLS = "AAPL,NVDA,AMD,AVGO,SNDK,INTC,GOOGL,QQQ"
-HTF_SYMBOLS = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ"
+FOCUSED_RESEARCH_SYMBOLS = "NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA"
+INTRADAY_SYMBOLS = FOCUSED_RESEARCH_SYMBOLS
+HTF_SYMBOLS = FOCUSED_RESEARCH_SYMBOLS
 STRATEGIES = (
     "ORB_RETEST_RECLAIM_BODY_2R", "HTF_BREAKOUT_RETEST_2R", "VWAP_EMA9_CROSS_2R",
 )
@@ -18,7 +19,7 @@ GROUPS = {
     **dict.fromkeys(("GOOGL", "META", "NFLX"), "platforms_media"),
     **dict.fromkeys(("AMZN", "TSLA"), "consumer_discretionary"),
     **dict.fromkeys(("JPM", "V", "MA"), "financials_payments"),
-    "COST": "consumer_staples", "QQQ": "broad_market",
+    "COST": "consumer_staples", "QQQ": "broad_market", "TQQQ": "broad_market",
 }
 
 

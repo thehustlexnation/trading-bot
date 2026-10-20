@@ -17,34 +17,16 @@ from strategy.signals import (
 from strategy.market_calendar import compare_session_minutes, get_expected_regular_session_minutes
 
 
-FULL_SYMBOLS = [
-    "AAPL",
-    "ADBE",
-    "AMD",
-    "AMZN",
-    "AVGO",
-    "COST",
-    "CRM",
-    "GOOGL",
-    "JPM",
-    "MA",
-    "META",
-    "MSFT",
-    "NFLX",
-    "NVDA",
-    "ORCL",
-    "TSLA",
-    "V",
-]
-
 SYMBOLS = [
-    "AAPL",
-    "AMD",
-    "AMZN",
-    "GOOGL",
-    "META",
-    "MSFT",
     "NVDA",
+    "AAPL",
+    "META",
+    "GOOGL",
+    "TQQQ",
+    "AMD",
+    "AVGO",
+    "SNDK",
+    "INTC",
     "TSLA",
 ]
 

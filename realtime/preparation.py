@@ -109,7 +109,7 @@ def collect_catalysts(symbols, now, on_symbol=None, stop_event=None):
             break
         info = {"status": "UNKNOWN", "news": [], "earnings": [], "filings": [],
                 "first_seen_at": aware_timestamp(now).isoformat(), "sec_status": sec_status}
-        if symbol == "QQQ":
+        if symbol in {"QQQ", "TQQQ"}:
             info.update(status="ETF_CONTEXT_ONLY", reason="No issuer corporate earnings event")
         elif key:
             try:
