@@ -321,7 +321,22 @@ async def run_session(config, journal, now, shutdown):
 
     try:
         tasks.append(asyncio.create_task(heartbeat()))
-        history, daily = await asyncio.to_thread(fetch_history, config, now)
+        # Report process startup before the external history/bootstrap calls so a
+        # failed cron launch cannot disappear without a Slack diagnostic.
+        tasks.append(asyncio.create_task(notification_delivery()))
+        journal.enqueue(session, f"boot:{engine.code_sha}",
+            f"Shadow worker boot | {session}\n"
+            f"Bootstrap starting. Broker submission disabled.\n"
+            f"Code: {engine.code_sha} | config: {config.fingerprint}")
+        try:
+            history, daily = await asyncio.to_thread(fetch_history, config, now)
+        except Exception as exc:
+            journal.enqueue(session, f"bootstrap_failed:{engine.code_sha}",
+                f"Shadow worker bootstrap failed | {session}\n"
+                f"Error: {type(exc).__name__}\n"
+                f"Broker submission disabled. Code: {engine.code_sha}")
+            await asyncio.sleep(6)
+            raise
         await ingest_history(history)
         engine.daily = {symbol: daily[daily["ticker"] == symbol].copy() if "ticker" in daily else pd.DataFrame()
                         for symbol in config.htf}
@@ -341,7 +356,7 @@ async def run_session(config, journal, now, shutdown):
         stream.subscribe_quotes(quote, *config.subscriptions)
         stream_task = asyncio.create_task(stream._run_forever())
         tasks.extend([asyncio.create_task(consume()), asyncio.create_task(context_refresh()),
-                      asyncio.create_task(preparation_refresh()), asyncio.create_task(notification_delivery())])
+                      asyncio.create_task(preparation_refresh())])
         HEALTH["phase"] = "STREAM_CONNECTING"
         connection_deadline = time.monotonic() + 45
         was_connected = False
