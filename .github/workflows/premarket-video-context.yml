@@ -14,7 +14,7 @@ on:
       watchlist:
         description: Stock symbols to extract from the transcript
         required: true
-        default: AAPL,NVDA,SNDK,INTC,GOOGL,MSFT,AMZN,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,SPY,QQQ,IWM
+        default: NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA
 
 jobs:
   premarket-video-context:
