@@ -6,7 +6,7 @@ on:
       symbol:
         description: Stock symbols to scan, comma-separated
         required: true
-        default: AAPL,NVDA,AMD,AVGO,SNDK,INTC,GOOGL,QQQ
+        default: NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA
       cutoff:
         description: New York cutoff time
         required: true
@@ -18,7 +18,7 @@ on:
       htf_symbols:
         description: HTF strategy symbols, comma-separated
         required: true
-        default: AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ
+        default: NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA
       news_start:
         description: New York start time for economic news risk check
         required: false
@@ -74,8 +74,8 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,AMD,AVGO,SNDK,INTC,GOOGL,QQQ' }}"
-          HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
+          SYMBOLS="${{ github.event.inputs.symbol || 'NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA' }}"
+          HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA' }}"
           WATCHLIST="$SYMBOLS,$HTF_SYMBOLS"
           python scripts/stock_catalyst_risk.py \
             --symbols "$WATCHLIST" \
@@ -91,12 +91,12 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          SYMBOLS="${{ github.event.inputs.symbol || 'AAPL,NVDA,AMD,AVGO,SNDK,INTC,GOOGL,QQQ' }}"
+          SYMBOLS="${{ github.event.inputs.symbol || 'NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA' }}"
           CUTOFF="${{ github.event.inputs.cutoff || '10:15' }}"
           NEWS_START="${{ github.event.inputs.news_start || '08:00' }}"
           NEWS_END="${{ github.event.inputs.news_end || '10:30' }}"
           STRATEGIES="${{ github.event.inputs.strategies || 'ORB_RETEST_RECLAIM_BODY_2R,HTF_BREAKOUT_RETEST_2R,VWAP_EMA9_CROSS_2R' }}"
-          HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,QQQ' }}"
+          HTF_SYMBOLS="${{ github.event.inputs.htf_symbols || 'NVDA,AAPL,META,GOOGL,TQQQ,AMD,AVGO,SNDK,INTC,TSLA' }}"
           SUBMIT_ARGS=""
           if [ "${{ github.event.inputs.submit_paper || 'false' }}" = "true" ]; then
             SUBMIT_ARGS="--submit --auto-submit-watch"

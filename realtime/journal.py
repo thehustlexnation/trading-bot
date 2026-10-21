@@ -44,10 +44,24 @@ def entry_message(payload):
 
 
 def exit_message(payload):
-    return (f"SHADOW RESULT - {payload['symbol']} | {payload['outcome']}\n"
-            f"Hypothetical result: {payload['r_multiple']:+.2f}R / ${payload['pnl']:+.2f} before fees.\n"
-            "Quote-based simulation only; no broker position was opened or closed."
-            + ("\nData gap: intervening path is unverified; excluded from verified-path totals." if payload.get("path_gap") else ""))
+    from realtime.diagnostics import quote_spread_bps
+
+    unverified = payload.get("path_gap", False)
+    title = "UNVERIFIED SHADOW OBSERVATION" if unverified else "SHADOW RESULT"
+    lines = [f"{title} - {payload['symbol']} | {payload['outcome']}",
+             f"Observed quote mark: {payload['r_multiple']:+.2f}R / ${payload['pnl']:+.2f} before fees."]
+    if all(name in payload for name in ("entry", "stop", "exit", "risk")):
+        lines.extend([f"Entry: {payload['entry']:.2f} | planned stop: {payload['stop']:.2f} | observed exit: {payload['exit']:.2f}",
+                      f"1R planned risk: ${payload['risk']:.2f}; R = observed P/L / planned risk."])
+    spread = quote_spread_bps(payload.get("exit_quote"))
+    if spread is not None:
+        lines.append(f"Exit quote spread: {spread:.1f} bps.")
+    if unverified:
+        reasons = ", ".join(payload.get("unverified_reasons", {})) or "LEGACY_UNVERIFIED_PATH"
+        lines.extend([f"Unverified reasons: {reasons}.",
+                      "Excluded from verified-path P/L. A quote mark beyond the stop does not establish a fill at that price."])
+    lines.append("Quote-based simulation only; no broker position was opened or closed.")
+    return "\n".join(lines)
 
 
 class Journal:
@@ -214,13 +228,14 @@ class Journal:
                 session=session, state="PENDING", created_at=utc_string(now), message=exit_message(payload)))
         return payload
 
-    def mark_path_gap(self, session, symbol):
+    def mark_path_gap(self, session, symbol, reason="QUOTE_OBSERVATION_GAP", detail=None):
         with self.transaction() as conn:
             row = conn.execute(select(self.positions).where(
                 self.positions.c.key == f"{session}:{symbol}", self.positions.c.state == "OPEN",
             ).with_for_update()).mappings().first()
             if row:
-                payload = {**row["payload"], "path_gap": True}
+                reasons = {**row["payload"].get("unverified_reasons", {}), reason: serializable(detail or {})}
+                payload = {**row["payload"], "path_gap": True, "unverified_reasons": reasons}
                 conn.execute(update(self.positions).where(self.positions.c.key == row["key"]).values(payload=payload))
 
     def mark_one_r(self, session, symbol):

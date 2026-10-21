@@ -16,13 +16,11 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from paper_trading.notifications import notify_slack
+from realtime.config import FOCUSED_RESEARCH_SYMBOLS
 
 
 DEFAULT_CHANNEL_URL = "https://www.youtube.com/@VincentDesiano/streams"
-DEFAULT_WATCHLIST = (
-    "AAPL,NVDA,SNDK,INTC,GOOGL,MSFT,AMZN,META,TSLA,AMD,AVGO,"
-    "JPM,V,MA,NFLX,COST,ORCL,CRM,ADBE,SPY,QQQ,IWM"
-)
+DEFAULT_WATCHLIST = FOCUSED_RESEARCH_SYMBOLS
 
 
 @dataclass(frozen=True)

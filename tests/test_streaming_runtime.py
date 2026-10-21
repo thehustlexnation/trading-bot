@@ -11,7 +11,7 @@ from realtime.engine import ShadowEngine
 from realtime.journal import Journal
 from realtime.market import MarketState, Quote, with_entry_observation
 from realtime.preparation import activity_summary, build_dossier, format_preparation, prepare_history
-from realtime.service import configuration_report, database_url
+from realtime.service import configuration_report, database_url, preflight_message
 from scripts.paper_trade import WAIT_REASONS, final_policy_rejection
 from scripts.realtime_runner import next_runner_start
 from paper_trading.vwap_ema_cross import build_three_minute_bars
@@ -54,13 +54,22 @@ def make_engine(tmp_path, symbol="AAPL", now=NOW):
 def test_default_inventory_and_sanitized_configuration(monkeypatch):
     monkeypatch.delenv("RAILWAY_ENVIRONMENT_ID", raising=False)
     config = RuntimeConfig()
-    assert len(config.watchlist) == 20
-    assert len(config.subscriptions) == 22
-    assert len(config.lanes) == 34
+    assert config.watchlist == ("NVDA", "AAPL", "META", "GOOGL", "TQQQ", "AMD", "AVGO", "SNDK", "INTC", "TSLA")
+    assert len(config.subscriptions) == 13
+    assert len(config.lanes) == 30
     assert config.fingerprint == RuntimeConfig().fingerprint
     report = configuration_report(config)
     assert report["broker_submission"] == "DISABLED"
     assert "api_key" not in report and "secret" not in report
+
+
+def test_preflight_message_is_explicitly_shadow_only():
+    config = RuntimeConfig()
+    message = preflight_message(config, "test-sha", {symbol: 1 for symbol in config.subscriptions}, 3)
+    assert "PREFLIGHT TEST | PASS" in message
+    assert "10 instruments | 30 lanes" in message
+    assert "no broker orders" in message
+    assert "Ready for the next market session." in message
 
 
 @pytest.mark.parametrize("changes", [{"feed": "delayed_sip"}, {"equity": float("nan")},
@@ -191,6 +200,7 @@ def test_restart_preserves_claim_and_shadow_position(tmp_path):
     restored = ShadowEngine(engine.config, Journal(f"sqlite:///{tmp_path}/state.sqlite3"), SESSION, "owner")
     assert "AAPL" in restored.positions
     assert restored.positions["AAPL"]["path_gap"]
+    assert "WORKER_RESTART" in restored.positions["AAPL"]["unverified_reasons"]
     assert restored.evaluate_lane("AAPL", ORB, NOW) == "SYMBOL_ALREADY_EVALUATED"
 
 
@@ -205,6 +215,56 @@ def test_quote_exit_and_replay_are_idempotent(tmp_path):
     assert row["state"] == "CLOSED"
     assert row["payload"]["r_multiple"] == pytest.approx(2)
     assert engine.close("AAPL", target, "TARGET", later) is None
+
+
+def test_wide_exit_quote_is_unverified_and_preserves_observed_loss(tmp_path):
+    from realtime.journal import exit_message
+    from realtime.diagnostics import trade_diagnostics
+
+    engine = make_engine(tmp_path)
+    assert engine.evaluate_lane("AAPL", ORB, NOW) == "APPROVED_SHADOW"
+    position = engine.positions["AAPL"]
+    risk_per_share = position["entry"] - position["stop"]
+    later = NOW + timedelta(seconds=2)
+    engine.ingest_quote(quote(now=later, bid=position["entry"] - 4.2 * risk_per_share,
+                             ask=position["entry"] + 0.02), later)
+    payload = engine.journal.shadow_positions(SESSION)[0]["payload"]
+    assert payload["r_multiple"] == pytest.approx(-4.2)
+    assert payload["path_gap"]
+    assert "EXIT_SPREAD_LIMIT" in payload["unverified_reasons"]
+    assert payload["unverified_reasons"]["EXIT_SPREAD_LIMIT"]["quote"]["bid"] == payload["exit"]
+    assert "UNVERIFIED SHADOW OBSERVATION" in exit_message(payload)
+    assert "planned stop" in exit_message(payload)
+    assert "closed P/L before fees: $+0.00" in engine.recap()
+    audit = trade_diagnostics(payload)
+    assert not audit["verified_path"] and audit["r_calculated_from_record"] == pytest.approx(-4.2)
+    assert audit["exit_spread_bps"] > engine.config.max_spread_bps
+
+
+def test_quote_gap_retains_the_last_observations_and_elapsed_time(tmp_path):
+    engine = make_engine(tmp_path)
+    assert engine.evaluate_lane("AAPL", ORB, NOW) == "APPROVED_SHADOW"
+    later = NOW + timedelta(seconds=20)
+    engine.ingest_quote(quote(now=later), later)
+    payload = engine.journal.shadow_positions(SESSION)[0]["payload"]
+    detail = payload["unverified_reasons"]["QUOTE_OBSERVATION_GAP"]
+    assert detail["gap_seconds"] == 20
+    assert pd.Timestamp(detail["previous_quote"]["timestamp"]) == NOW
+    assert pd.Timestamp(detail["next_quote"]["timestamp"]) == later
+
+
+def test_tight_fresh_stop_quote_remains_a_verified_shadow_mark(tmp_path):
+    from realtime.journal import exit_message
+
+    engine = make_engine(tmp_path)
+    assert engine.evaluate_lane("AAPL", ORB, NOW) == "APPROVED_SHADOW"
+    stop = engine.positions["AAPL"]["stop"]
+    later = NOW + timedelta(seconds=2)
+    engine.ingest_quote(quote(now=later, bid=stop, ask=stop + 0.02), later)
+    payload = engine.journal.shadow_positions(SESSION)[0]["payload"]
+    assert payload["r_multiple"] == pytest.approx(-1)
+    assert not payload.get("path_gap")
+    assert exit_message(payload).startswith("SHADOW RESULT")
 
 
 def test_cutoff_does_not_falsely_close_without_current_quote(tmp_path):
@@ -271,7 +331,7 @@ def test_preparation_covers_every_instrument_with_unknowns():
     empty = prepare_history(pd.DataFrame())
     config = RuntimeConfig()
     dossiers = [build_dossier(symbol, empty, empty, NOW) for symbol in config.watchlist]
-    assert len(dossiers) == 20
+    assert len(dossiers) == 10
     assert all(row["catalysts"]["status"] == "UNKNOWN" for row in dossiers)
     output = format_preparation(dossiers, "iex")
     assert all(symbol in output for symbol in config.watchlist)

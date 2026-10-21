@@ -13,13 +13,18 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
+from sqlalchemy import text
 
+from realtime.acceptance import session_report
 from realtime.config import RuntimeConfig, clock
+from realtime.diagnostics import trade_diagnostics
 from realtime.engine import ShadowEngine
 from realtime.journal import Journal
 from realtime.market import NY
 from realtime.network import BoundedHTTPAdapter
 from realtime.preparation import build_dossier, collect_catalysts, format_preparation, prepare_history
+from realtime.readiness import preparation_phase, strategy_readiness
+from realtime.telemetry import RuntimeTelemetry
 
 UTC = timezone.utc
 LOG = logging.getLogger("realtime")
@@ -43,6 +48,7 @@ def configuration_report(config):
         "policy": config.policy_version, "config_hash": config.fingerprint,
         "feed": config.feed, "watchlist": config.watchlist,
         "subscriptions": config.subscriptions, "lane_count": len(config.lanes),
+        "lanes": config.lanes, "strategy_readiness": strategy_readiness(config),
         "preparation_start_ny": config.preparation_start, "watch_start_ny": config.watch_start,
         "last_entry_ny": config.last_entry, "cutoff_ny": config.cutoff,
         "storage": "PostgreSQL" if database_url().startswith("postgres") else "local SQLite",
@@ -50,8 +56,63 @@ def configuration_report(config):
         "slack_configured": bool(os.getenv("SLACK_WEBHOOK_URL")),
         "finnhub_configured": bool(os.getenv("FINNHUB_API_KEY")),
         "sec_configured": bool(os.getenv("SEC_USER_AGENT")),
-        "warnings": ["EMA9's current completed-bar warmup overlaps the 10:00 entry deadline; no rule or deadline was silently relaxed."],
+        "warnings": [f"{strategy}: warmup leaves no entry window before {config.last_entry} NY."
+                     for strategy, row in strategy_readiness(config).items() if row["status"] == "NO_ENTRY_WINDOW"],
     }
+
+
+def preflight_message(config, code_sha, history_counts, stream_seconds):
+    coverage = ", ".join(f"{symbol}:{count}" for symbol, count in history_counts.items())
+    return (
+        "PREFLIGHT TEST | PASS\n"
+        "Mode: SHADOW ONLY | no broker orders\n"
+        f"Feed: {config.feed} | {len(config.watchlist)} instruments | {len(config.lanes)} lanes\n"
+        f"History coverage: {coverage}\n"
+        f"Live stream subscription: PASS ({stream_seconds}s)\n"
+        f"Database: PASS | Slack delivery: PASS\n"
+        f"Code: {code_sha} | config: {config.fingerprint}\n"
+        "Ready for the next market session."
+    )
+
+
+async def run_preflight_test(config, smoke_seconds):
+    """Exercise production dependencies without waiting for market hours or trading."""
+    from paper_trading.notifications import notify_slack
+
+    journal = Journal(database_url())
+    try:
+        with journal.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    finally:
+        journal.engine.dispose()
+
+    history, _ = await asyncio.to_thread(fetch_history, config, datetime.now(UTC))
+    history_counts = {
+        symbol: int((history["ticker"] == symbol).sum())
+        for symbol in config.subscriptions
+    }
+    missing = [symbol for symbol, count in history_counts.items() if count == 0]
+    if missing:
+        raise RuntimeError(f"Historical data coverage missing symbols: {', '.join(missing)}")
+
+    await stream_smoke(config, smoke_seconds)
+    code_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GITHUB_SHA", "local"))
+    message = preflight_message(config, code_sha, history_counts, smoke_seconds)
+    if not notify_slack(os.getenv("SLACK_WEBHOOK_URL"), message, True):
+        raise RuntimeError("Slack preflight delivery failed or SLACK_WEBHOOK_URL is missing.")
+    print(json.dumps({
+        "mode": "PREFLIGHT_TEST",
+        "watchlist_count": len(config.watchlist),
+        "lane_count": len(config.lanes),
+        "subscription_count": len(config.subscriptions),
+        "history_counts": history_counts,
+        "stream_authenticated_and_subscribed": True,
+        "database": "ok",
+        "slack": "sent",
+        "orders_sent": 0,
+        "code_sha": code_sha,
+        "config_hash": config.fingerprint,
+    }, sort_keys=True), flush=True)
 
 
 def health_server():
@@ -132,6 +193,22 @@ async def stream_smoke(config, seconds):
         raise RuntimeError("Market-data stream authentication/subscription was not confirmed.")
 
 
+async def acquire_session_lease(journal, owner, shutdown, timeout=90):
+    deadline = time.monotonic() + timeout
+    while not shutdown.is_set():
+        if journal.acquire(owner, datetime.now(UTC)):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Another shadow worker still owns the database lease after the handover timeout.")
+        HEALTH.update(phase="WAITING_FOR_LEASE", heartbeat=time.monotonic())
+        try:
+            await asyncio.wait_for(shutdown.wait(), timeout=min(2, remaining))
+        except TimeoutError:
+            pass
+    return False
+
+
 async def run_session(config, journal, now, shutdown):
     from alpaca.data.enums import DataFeed
     from alpaca.data.live import StockDataStream
@@ -140,14 +217,16 @@ async def run_session(config, journal, now, shutdown):
 
     session = now.astimezone(ZoneInfo(NY)).date().isoformat()
     owner = uuid4().hex
-    if not journal.acquire(owner, now):
-        raise RuntimeError("Another shadow worker owns this database lease.")
+    if not await acquire_session_lease(journal, owner, shutdown):
+        return
+    now = datetime.now(UTC)
     HEALTH.update(phase="BOOTSTRAP", session=session, feed=config.feed,
                   config_hash=config.fingerprint, faulted=False)
     engine = ShadowEngine(config, journal, session, owner,
         code_sha=os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GITHUB_SHA", "local")),
         now_fn=lambda: datetime.now(UTC))
     queue = asyncio.Queue(maxsize=10000)
+    telemetry = RuntimeTelemetry()
     stream = None
     stream_task = None
     tasks = []
@@ -188,7 +267,9 @@ async def run_session(config, journal, now, shutdown):
         while not shutdown.is_set():
             try:
                 catalysts = await asyncio.to_thread(collect_catalysts, config.watchlist, datetime.now(UTC), stop_event=source_stop)
-                save_preparation()
+                dossiers = save_preparation()
+                phase = preparation_phase(pd.Timestamp.now(tz="UTC"), config)
+                journal.enqueue(session, f"preparation:{phase}:sources", format_preparation(dossiers, config.feed, phase))
             except Exception as exc:
                 journal.event(session, "PREPARATION_SOURCE_ERROR", {"error_type": type(exc).__name__})
             await asyncio.sleep(600)
@@ -217,6 +298,9 @@ async def run_session(config, journal, now, shutdown):
     async def bar(message):
         await enqueue("bar", message)
 
+    async def revised_bar(message):
+        await enqueue("bar_revision", message)
+
     async def quote(message):
         await enqueue("quote", message)
 
@@ -224,10 +308,12 @@ async def run_session(config, journal, now, shutdown):
         while not shutdown.is_set():
             kind, message, received = await queue.get()
             try:
-                if kind == "bar":
+                processed, depth = datetime.now(UTC), queue.qsize() + 1
+                if kind in {"bar", "bar_revision"}:
                     engine.ingest_bar(message, received)
                 else:
                     engine.ingest_quote(message, received)
+                telemetry.market_event(kind, message, received, processed, depth)
             except ValueError:
                 journal.event(session, "INVALID_MARKET_EVENT", {"kind": kind, "symbol": message.get("symbol")})
             finally:
@@ -235,27 +321,47 @@ async def run_session(config, journal, now, shutdown):
 
     try:
         tasks.append(asyncio.create_task(heartbeat()))
-        history, daily = await asyncio.to_thread(fetch_history, config, now)
+        # Report process startup before the external history/bootstrap calls so a
+        # failed cron launch cannot disappear without a Slack diagnostic.
+        tasks.append(asyncio.create_task(notification_delivery()))
+        journal.enqueue(session, f"boot:{engine.code_sha}",
+            f"Shadow worker boot | {session}\n"
+            f"Bootstrap starting. Broker submission disabled.\n"
+            f"Code: {engine.code_sha} | config: {config.fingerprint}")
+        try:
+            history, daily = await asyncio.to_thread(fetch_history, config, now)
+        except Exception as exc:
+            journal.enqueue(session, f"bootstrap_failed:{engine.code_sha}",
+                f"Shadow worker bootstrap failed | {session}\n"
+                f"Error: {type(exc).__name__}\n"
+                f"Broker submission disabled. Code: {engine.code_sha}")
+            await asyncio.sleep(6)
+            raise
         await ingest_history(history)
         engine.daily = {symbol: daily[daily["ticker"] == symbol].copy() if "ticker" in daily else pd.DataFrame()
                         for symbol in config.htf}
-        journal.event(session, "SESSION_START", {**configuration_report(config), "code_sha": engine.code_sha})
-        journal.enqueue(session, "start",
+        identity = {**configuration_report(config), "code_sha": engine.code_sha}
+        journal.event(session, "SESSION_START", identity)
+        LOG.info("Shadow worker identity %s", json.dumps(identity, sort_keys=True))
+        for row in journal.shadow_positions(session):
+            LOG.info("Shadow trade audit %s", json.dumps(trade_diagnostics(row["payload"]), sort_keys=True))
+        journal.enqueue(session, f"start:{engine.code_sha}",
             f"Shadow worker starting | {session}\nStream connection not yet confirmed. Broker submission disabled.\n"
             f"Feed: {config.feed} | {len(config.watchlist)} instruments | {len(config.lanes)} lanes\n"
             f"Entry cutoff: {config.last_entry} NY | monitoring cutoff: {config.cutoff} NY\n"
             f"Code: {engine.code_sha} | config: {config.fingerprint}")
         stream = StockDataStream(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], feed=DataFeed(config.feed))
         stream.subscribe_bars(bar, *config.subscriptions)
-        stream.subscribe_updated_bars(bar, *config.subscriptions)
+        stream.subscribe_updated_bars(revised_bar, *config.subscriptions)
         stream.subscribe_quotes(quote, *config.subscriptions)
         stream_task = asyncio.create_task(stream._run_forever())
         tasks.extend([asyncio.create_task(consume()), asyncio.create_task(context_refresh()),
-                      asyncio.create_task(preparation_refresh()), asyncio.create_task(notification_delivery())])
+                      asyncio.create_task(preparation_refresh())])
         HEALTH["phase"] = "STREAM_CONNECTING"
         connection_deadline = time.monotonic() + 45
         was_connected = False
-        last_backfill, last_preparation = time.monotonic(), 0
+        last_backfill, last_preparation, last_telemetry = time.monotonic(), 0, time.monotonic()
+        last_preparation_phase = None
         while not shutdown.is_set():
             current = datetime.now(UTC)
             if lost_lease.is_set() or any(task.done() for task in tasks):
@@ -265,8 +371,9 @@ async def run_session(config, journal, now, shutdown):
             if stream._running:
                 if not was_connected:
                     journal.event(session, "STREAM_SUBSCRIPTION_CONFIRMED", {"symbols": config.subscriptions, "feed": config.feed})
-                    journal.enqueue(session, "stream_connected", f"Market-data subscription confirmed | {session}\n"
+                    journal.enqueue(session, f"stream_connected:{engine.code_sha}", f"Market-data subscription confirmed | {session}\n"
                         f"Feed: {config.feed} | {len(config.subscriptions)} symbols.\n"
+                        f"Code: {engine.code_sha}\n"
                         "Shadow only. Per-symbol data completeness and quote freshness are checked separately.")
                 was_connected = True
                 connection_deadline = time.monotonic() + 60
@@ -282,14 +389,23 @@ async def run_session(config, journal, now, shutdown):
                 except Exception as exc:
                     journal.event(session, "BACKFILL_ERROR", {"error_type": type(exc).__name__, "at": current})
                 last_backfill = time.monotonic()
-            if time.monotonic() - last_preparation >= 300:
-                journal.enqueue(session, "preparation", format_preparation(save_preparation(), config.feed))
+            phase = preparation_phase(pd.Timestamp(current), config)
+            if phase != last_preparation_phase or time.monotonic() - last_preparation >= 300:
+                journal.enqueue(session, f"preparation:{phase}", format_preparation(save_preparation(), config.feed, phase))
                 last_preparation = time.monotonic()
+                last_preparation_phase = phase
             if bool(stream._running) and queue.empty():
                 started = time.monotonic()
                 engine.tick(datetime.now(UTC))
+                telemetry.observe("evaluation_seconds", time.monotonic() - started)
                 HEALTH.update(last_tick_seconds=time.monotonic() - started,
                               open_shadow_positions=len(engine.positions), queued_events=queue.qsize())
+            if time.monotonic() - last_telemetry >= 60:
+                snapshot = telemetry.snapshot(datetime.now(UTC))
+                journal.event(session, "RUNTIME_TELEMETRY", snapshot)
+                LOG.info("Shadow telemetry %s", json.dumps(snapshot, sort_keys=True))
+                telemetry.reset()
+                last_telemetry = time.monotonic()
             current = datetime.now(UTC)
             cutoff = datetime.combine(current.astimezone(ZoneInfo(NY)).date(), clock(config.cutoff), ZoneInfo(NY))
             if current >= cutoff.astimezone(UTC):
@@ -300,10 +416,21 @@ async def run_session(config, journal, now, shutdown):
                     raise RuntimeError("Shadow cutoff has no fresh quote; journal remains OPEN, not falsely closed.")
             await asyncio.sleep(1)
         recap = engine.recap()
-        journal.event(session, "SESSION_RECAP", {"text": recap})
-        journal.enqueue(session, "recap", recap)
+        interrupted = shutdown.is_set()
+        if interrupted:
+            recap = recap.replace("Streaming shadow recap", "Streaming shadow checkpoint (worker interrupted)", 1)
+        journal.event(session, "RUNTIME_TELEMETRY", telemetry.snapshot(datetime.now(UTC)))
+        journal.event(session, "SESSION_INTERRUPTED" if interrupted else "SESSION_RECAP",
+                      {"text": recap, "code_sha": engine.code_sha, "asof": datetime.now(UTC)})
+        journal.enqueue(session, f"checkpoint:{owner}" if interrupted else f"recap:{engine.code_sha}", recap)
         print(recap, flush=True)
         await asyncio.sleep(6)
+        try:
+            report = session_report(journal.engine, session, datetime.now(UTC), engine.code_sha)
+            journal.event(session, "SESSION_ACCEPTANCE", report)
+            LOG.info("Shadow acceptance %s", json.dumps(report, sort_keys=True))
+        except Exception as exc:
+            LOG.error("Session acceptance report unavailable: %s", type(exc).__name__)
     except Exception as exc:
         engine.stopped = True
         try:
@@ -372,6 +499,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="Print sanitized configuration without network access.")
     parser.add_argument("--smoke-test", action="store_true", help="Read-only subscription check; no Slack or orders.")
     parser.add_argument("--bootstrap-test", action="store_true", help="Read-only historical bootstrap and preparation check; no Slack or orders.")
+    parser.add_argument("--preflight-test", action="store_true", help="Read-only production readiness test; sends one PASS message to Slack.")
     parser.add_argument("--smoke-seconds", type=int, default=15)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--continuous", action="store_true", help="Explicitly opt into an always-running supervisor.")
@@ -387,6 +515,10 @@ def main():
         config = RuntimeConfig.from_env()
         if args.check:
             print(json.dumps(configuration_report(config), sort_keys=True, indent=2))
+        elif args.preflight_test:
+            if not 1 <= args.smoke_seconds <= 120:
+                raise ValueError("Smoke duration must be between 1 and 120 seconds.")
+            asyncio.run(run_preflight_test(config, args.smoke_seconds))
         elif args.bootstrap_test:
             history, daily = fetch_history(config, datetime.now(UTC))
             dossiers = [build_dossier(symbol, history, daily, datetime.now(UTC)) for symbol in config.watchlist]

@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from realtime.config import RuntimeConfig
+from realtime.acceptance import session_report
 from realtime.journal import Journal
 
 
@@ -39,8 +40,24 @@ def test_postgres_schema_lease_reservation_and_recovery():
                    "quantity": 25, "risk": 25, "notional": 2500}
         assert first.open_shadow("2026-10-19", "AAPL", "g", payload, RuntimeConfig(), "owner", now) == "APPROVED"
         assert second.shadow_positions("2026-10-19")[0]["symbol"] == "AAPL"
+        first.mark_path_gap("2026-10-19", "AAPL", "QUOTE_OBSERVATION_GAP", {"gap_seconds": 20, "asof": now})
+        assert second.shadow_positions("2026-10-19")[0]["payload"]["unverified_reasons"]["QUOTE_OBSERVATION_GAP"]["gap_seconds"] == 20
         first.close_shadow("2026-10-19", "AAPL", 102, "TARGET", now)
         assert second.shadow_positions("2026-10-19")[0]["pnl"] == 50
+        first.event("2026-10-19", "SESSION_START", {
+            "code_sha": "integration-sha", "config_hash": "test", "broker_submission": "DISABLED",
+        })
+        reader = create_engine(url, connect_args={"options": f"-c search_path={schema}"})
+        try:
+            report = session_report(reader, "2026-10-19", now, "integration-sha")
+            assert report["status"] == "INCOMPLETE"
+            assert report["code_sha"] == "integration-sha"
+            assert next(row for row in report["gates"] if row["name"] == "release_identity")["status"] == "PASS"
+            assert not report["source_errors"]["BACKFILL_ERROR"]
+            assert not report["trade_audits"][0]["verified_path"]
+            assert report["trade_audits"][0]["r_calculated_from_record"] == 2
+        finally:
+            reader.dispose()
     finally:
         for journal in journals:
             journal.engine.dispose()

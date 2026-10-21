@@ -37,7 +37,9 @@ class ShadowEngine:
         self.claimed = {row["symbol"] for row in journal.shadow_positions(session)}
         for symbol, payload in self.positions.items():
             payload["path_gap"] = True
-            journal.mark_path_gap(session, symbol)
+            detail = {"resumed_by_code_sha": code_sha}
+            payload.setdefault("unverified_reasons", {})["WORKER_RESTART"] = detail
+            journal.mark_path_gap(session, symbol, "WORKER_RESTART", detail)
         self.stopped = False
 
     def set_macro(self, context, now):
@@ -57,8 +59,10 @@ class ShadowEngine:
         if position is None or quote.rejection(now, self.config.max_quote_age_seconds, float("inf")):
             return
         if previous is not None and (quote.timestamp - previous.timestamp).total_seconds() > self.config.max_quote_age_seconds:
-            position["path_gap"] = True
-            self.journal.mark_path_gap(self.session, quote.symbol)
+            self.mark_unverified(quote.symbol, "QUOTE_OBSERVATION_GAP", {
+                "previous_quote": asdict(previous), "next_quote": asdict(quote),
+                "gap_seconds": (quote.timestamp - previous.timestamp).total_seconds(),
+            })
         if quote.timestamp < aware_timestamp(position["entry_time"]):
             return
         price = quote.bid if position["side"] == "long" else quote.ask
@@ -224,12 +228,22 @@ class ShadowEngine:
 
     def close(self, symbol, price, reason, now):
         quote = self.market.quotes.get(symbol)
+        rejection = quote.rejection(now, self.config.max_quote_age_seconds, self.config.max_spread_bps) if quote else "QUOTE_UNAVAILABLE"
+        if rejection and symbol in self.positions:
+            self.mark_unverified(symbol, f"EXIT_{rejection}", {"quote": asdict(quote) if quote else None,
+                "observed_at": now, "max_spread_bps": self.config.max_spread_bps})
         result = self.journal.close_shadow(self.session, symbol, price, reason, now,
             asdict(quote) if quote else None)
         if result is not None:
             self.positions.pop(symbol, None)
             self.journal.event(self.session, "SHADOW_EXIT", result)
         return result
+
+    def mark_unverified(self, symbol, reason, detail):
+        position = self.positions[symbol]
+        position["path_gap"] = True
+        position.setdefault("unverified_reasons", {})[reason] = serializable(detail)
+        self.journal.mark_path_gap(self.session, symbol, reason, detail)
 
     def recap(self):
         rows = self.journal.shadow_positions(self.session)

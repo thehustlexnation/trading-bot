@@ -109,7 +109,7 @@ def collect_catalysts(symbols, now, on_symbol=None, stop_event=None):
             break
         info = {"status": "UNKNOWN", "news": [], "earnings": [], "filings": [],
                 "first_seen_at": aware_timestamp(now).isoformat(), "sec_status": sec_status}
-        if symbol == "QQQ":
+        if symbol in {"QQQ", "TQQQ"}:
             info.update(status="ETF_CONTEXT_ONLY", reason="No issuer corporate earnings event")
         elif key:
             try:
@@ -160,8 +160,10 @@ def parse_filings(payload, cik, today, now):
     return result
 
 
-def format_preparation(dossiers, feed):
-    lines = ["Premarket preparation | SHADOW ONLY", f"Feed: {feed}; all {len(dossiers)} configured instruments", "```",
+def format_preparation(dossiers, feed, phase="initial"):
+    title = {"initial": "Initial preparation", "watch": "Watch preparation", "opening": "Opening preparation"}[phase]
+    lines = [f"{title} | SHADOW ONLY", f"Feed: {feed}; all {len(dossiers)} configured instruments",
+             f"As of: {max((row['asof'] for row in dossiers), default='unknown')}", "```",
              "Symbol | Gap     | Pre RVOL | News / filings"]
     for row in dossiers:
         gap = f"{row['gap_fraction']:+.2%}" if row["gap_fraction"] is not None else "unknown"

@@ -5,6 +5,11 @@ This is the first implementation release of the
 It is a broker-free research service, not a validated profitable strategy or an
 order-enabled trading release. Production deployment requires verified host access.
 
+Follow-up: [the October 20 acceptance checkpoint](SHADOW_ACCEPTANCE_2026-10-20.md)
+records the verified hosted release, baseline reconciliation, fixed-parameter
+research rerun, and prepared telemetry/reporting changes. Consult that checkpoint
+for the distinction between deployed code and the subsequent local follow-up.
+
 ## Implemented
 
 - One Alpaca market-data stream subscribes to bars, revised bars and quotes for the

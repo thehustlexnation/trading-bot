@@ -15,6 +15,7 @@ def summarize_trades(
             "total_r": 0.0,
             "average_r": 0.0,
             "profit_factor": 0.0,
+            "max_drawdown": 0.0,
         }
 
     wins = (

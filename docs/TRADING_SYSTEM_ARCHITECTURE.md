@@ -87,10 +87,10 @@ actions and notifications. Add Redis or a distributed message broker only if mea
 load or recovery requirements justify it. Agent count does not imply server count.
 
 Maintain one strategy state machine per `(symbol, strategy_version, session)`.
-Use all 20 configured watchlist instruments as the research universe and SPY as an
-additional benchmark where needed. Explicit per-strategy symbol eligibility preserves
-the current eight-symbol intraday and eighteen-symbol HTF subsets until research
-justifies expanding them. Every eligible symbol receives the same defined policy.
+Use the focused ten-symbol watchlist as the research universe and retain QQQ/SPY as
+benchmarks plus SMH as sector context. Intraday and HTF lanes currently share the
+same ten symbols so experiments stay comparable and easy to reproduce. Every
+eligible symbol receives the same defined policy.
 
 Fetch each symbol's bars once, share QQQ/SPY context, and cache previous-session HTF
 data once per session. State changes are ordered per symbol, while different symbols

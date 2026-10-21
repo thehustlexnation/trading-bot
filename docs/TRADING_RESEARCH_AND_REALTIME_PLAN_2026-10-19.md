@@ -7,6 +7,10 @@ Research date: 2026-10-19. This extends the
 Implementation update: the first broker-free streaming implementation is described
 in [the shadow release notes](REALTIME_SHADOW_RELEASE.md). The sections below retain
 the original proposal; research promotion and hosted acceptance are not complete.
+The [October 20 checkpoint](SHADOW_ACCEPTANCE_2026-10-20.md) records actual Railway
+and Slack verification, baseline reconciliation and the next reporting changes.
+The [production verification](PRODUCTION_DEPLOYMENT_2026-10-20.md) records the
+subsequent deployed SHA, passing hosted CI and observed Slack trade results.
 
 Status: researched design and implementation backlog, not an implemented trading
 release, profitability certification, or verified Railway deployment. No orders,
@@ -78,18 +82,17 @@ derived feature. Deterministic code retains exclusive risk and execution authori
 
 ## 3. Preparation and research for every configured instrument
 
-Current watchlist union, 20 instruments:
+Current focused watchlist, 10 tradable instruments:
 
 ```text
-AAPL NVDA AMD AVGO SNDK INTC GOOGL QQQ MSFT AMZN
-META TSLA JPM V MA NFLX COST ORCL CRM ADBE
+NVDA AAPL META GOOGL TQQQ AMD AVGO SNDK INTC TSLA
 ```
 
-Prepare a dossier for all 20, not just the first three. Keep the current explicit
-per-strategy symbol subsets until a separate coverage change has been validated.
-MU was mentioned in earlier discussion but is absent from this configured union;
-it must not be described as monitored until configuration and coverage tests change.
-QQQ is a tradable ETF here; do not calculate its relative strength against itself.
+Prepare a dossier for all 10. Intraday and HTF experiments use the same focused
+universe so strategy comparisons do not silently change symbol coverage. QQQ, SPY,
+and SMH remain subscribed context instruments rather than members of the tradable
+watchlist. QQQ is the broad-market benchmark for the ten names; TQQQ is a tradable
+leveraged ETF and is not used as a benchmark.
 
 Each instrument receives one versioned, timestamped preparation record:
 
@@ -115,7 +118,7 @@ Company-specific emphasis should differ while the data contract stays consistent
 | Consumer/discretionary | AMZN, TSLA | Results/guidance and documented company-specific operating releases |
 | Financials/payments | JPM, V, MA | Results/guidance, rates and activity context |
 | Consumer staples | COST | Results and official company operating updates |
-| ETF | QQQ | Broad market and component-event exposure; no invented issuer earnings event |
+| ETFs | TQQQ | Tradable leveraged Nasdaq exposure; no invented issuer earnings event |
 
 These topic lists are proposed research coverage, not claims about today's news.
 For example, official [NVIDIA events](https://investor.nvidia.com/events-and-presentations/events-and-presentations/default.aspx),
@@ -212,7 +215,7 @@ Stocks and benchmarks share holdings and market exposure. A genuinely active sto
 can also diverge from a red index, so universal directional blocking is a hypothesis
 to test, not a known optimal policy.
 
-The fraction of these 20 instruments rising is watchlist participation, not full
+The fraction of these 10 instruments rising is watchlist participation, not full
 NYSE/Nasdaq market breadth. Minute OHLCV cannot reconstruct true order-book depth,
 buyer/seller aggressor flow, or an exact trade-by-price volume profile.
 
@@ -287,8 +290,8 @@ deployed settings. The current runner starts news checks around 09:25, not 07:45
 | --- | --- | --- |
 | Prior evening | Refresh prior-session bars, corporate actions and coming events | Versioned history and event calendar |
 | 07:45 | Check exchange session, credentials, source health and storage; establish ownership | Session record, feed/config identity, recoverable state |
-| 08:00-09:10 | Build dossiers for all 20; refresh news within provider quotas; observe scheduled releases | Dated source evidence and UNKNOWN states |
-| 09:10-09:20 | Map levels and rank activity; write bullish, bearish and stand-aside scenarios | Full-universe preparation table |
+| 08:00-09:10 | Build dossiers for all 10; refresh news within provider quotas; observe scheduled releases | Dated source evidence and UNKNOWN states |
+| 09:10-09:20 | Map levels and rank activity; write bullish, bearish and stand-aside scenarios | Focused-universe preparation table |
 | 09:20-09:25 | Validate subscriptions, broker/account health, quote freshness, risk and pending exposure | Explicit READY or NOT_READY |
 | 09:25 | Publish a concise preparation summary and arm eligible lanes | Delivery record and active-lane inventory |
 | 09:30-09:35 | Build the five-minute opening range without premature entries | Completed source observations and OR state |
@@ -349,7 +352,7 @@ All broker-writing paths, including manual approvals, use the same final authori
 
 Alpaca currently lists free Basic equity data as IEX-only with 30 streaming symbols;
 Algo Trader Plus is $99/month with broader US-exchange coverage. This is data cost,
-not hosting cost. Our 20-instrument union plus SPY and SMH is 22 symbols; confirm the
+not hosting cost. Our 10-instrument union plus QQQ, SPY, and SMH is 13 symbols; confirm the
 account's actual subscription and connection limits before implementation. IEX
 activity and VWAP are feed-specific observations, not the entire US market.
 [Alpaca plan documentation](https://docs.alpaca.markets/us/docs/about-market-data-api).
