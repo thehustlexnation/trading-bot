@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
+from sqlalchemy import text
 
 from realtime.acceptance import session_report
 from realtime.config import RuntimeConfig, clock
@@ -58,6 +59,60 @@ def configuration_report(config):
         "warnings": [f"{strategy}: warmup leaves no entry window before {config.last_entry} NY."
                      for strategy, row in strategy_readiness(config).items() if row["status"] == "NO_ENTRY_WINDOW"],
     }
+
+
+def preflight_message(config, code_sha, history_counts, stream_seconds):
+    coverage = ", ".join(f"{symbol}:{count}" for symbol, count in history_counts.items())
+    return (
+        "PREFLIGHT TEST | PASS\n"
+        "Mode: SHADOW ONLY | no broker orders\n"
+        f"Feed: {config.feed} | {len(config.watchlist)} instruments | {len(config.lanes)} lanes\n"
+        f"History coverage: {coverage}\n"
+        f"Live stream subscription: PASS ({stream_seconds}s)\n"
+        f"Database: PASS | Slack delivery: PASS\n"
+        f"Code: {code_sha} | config: {config.fingerprint}\n"
+        "Ready for the next market session."
+    )
+
+
+async def run_preflight_test(config, smoke_seconds):
+    """Exercise production dependencies without waiting for market hours or trading."""
+    from paper_trading.notifications import notify_slack
+
+    journal = Journal(database_url())
+    try:
+        with journal.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    finally:
+        journal.engine.dispose()
+
+    history, _ = await asyncio.to_thread(fetch_history, config, datetime.now(UTC))
+    history_counts = {
+        symbol: int((history["ticker"] == symbol).sum())
+        for symbol in config.subscriptions
+    }
+    missing = [symbol for symbol, count in history_counts.items() if count == 0]
+    if missing:
+        raise RuntimeError(f"Historical data coverage missing symbols: {', '.join(missing)}")
+
+    await stream_smoke(config, smoke_seconds)
+    code_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GITHUB_SHA", "local"))
+    message = preflight_message(config, code_sha, history_counts, smoke_seconds)
+    if not notify_slack(os.getenv("SLACK_WEBHOOK_URL"), message, True):
+        raise RuntimeError("Slack preflight delivery failed or SLACK_WEBHOOK_URL is missing.")
+    print(json.dumps({
+        "mode": "PREFLIGHT_TEST",
+        "watchlist_count": len(config.watchlist),
+        "lane_count": len(config.lanes),
+        "subscription_count": len(config.subscriptions),
+        "history_counts": history_counts,
+        "stream_authenticated_and_subscribed": True,
+        "database": "ok",
+        "slack": "sent",
+        "orders_sent": 0,
+        "code_sha": code_sha,
+        "config_hash": config.fingerprint,
+    }, sort_keys=True), flush=True)
 
 
 def health_server():
@@ -429,6 +484,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="Print sanitized configuration without network access.")
     parser.add_argument("--smoke-test", action="store_true", help="Read-only subscription check; no Slack or orders.")
     parser.add_argument("--bootstrap-test", action="store_true", help="Read-only historical bootstrap and preparation check; no Slack or orders.")
+    parser.add_argument("--preflight-test", action="store_true", help="Read-only production readiness test; sends one PASS message to Slack.")
     parser.add_argument("--smoke-seconds", type=int, default=15)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--continuous", action="store_true", help="Explicitly opt into an always-running supervisor.")
@@ -444,6 +500,10 @@ def main():
         config = RuntimeConfig.from_env()
         if args.check:
             print(json.dumps(configuration_report(config), sort_keys=True, indent=2))
+        elif args.preflight_test:
+            if not 1 <= args.smoke_seconds <= 120:
+                raise ValueError("Smoke duration must be between 1 and 120 seconds.")
+            asyncio.run(run_preflight_test(config, args.smoke_seconds))
         elif args.bootstrap_test:
             history, daily = fetch_history(config, datetime.now(UTC))
             dossiers = [build_dossier(symbol, history, daily, datetime.now(UTC)) for symbol in config.watchlist]

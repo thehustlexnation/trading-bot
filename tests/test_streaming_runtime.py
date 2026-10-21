@@ -11,7 +11,7 @@ from realtime.engine import ShadowEngine
 from realtime.journal import Journal
 from realtime.market import MarketState, Quote, with_entry_observation
 from realtime.preparation import activity_summary, build_dossier, format_preparation, prepare_history
-from realtime.service import configuration_report, database_url
+from realtime.service import configuration_report, database_url, preflight_message
 from scripts.paper_trade import WAIT_REASONS, final_policy_rejection
 from scripts.realtime_runner import next_runner_start
 from paper_trading.vwap_ema_cross import build_three_minute_bars
@@ -61,6 +61,15 @@ def test_default_inventory_and_sanitized_configuration(monkeypatch):
     report = configuration_report(config)
     assert report["broker_submission"] == "DISABLED"
     assert "api_key" not in report and "secret" not in report
+
+
+def test_preflight_message_is_explicitly_shadow_only():
+    config = RuntimeConfig()
+    message = preflight_message(config, "test-sha", {symbol: 1 for symbol in config.subscriptions}, 3)
+    assert "PREFLIGHT TEST | PASS" in message
+    assert "10 instruments | 30 lanes" in message
+    assert "no broker orders" in message
+    assert "Ready for the next market session." in message
 
 
 @pytest.mark.parametrize("changes", [{"feed": "delayed_sip"}, {"equity": float("nan")},
